@@ -59,13 +59,10 @@ func (h *MarketDataWSHandler) HandleTrades(c *websocket.Conn) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			// Ping para manter conexão
-			if err := c.WriteJSON(fiber.Map{"type": "ping"}); err != nil {
-				return
-			}
+	for range ticker.C {
+		// Ping para manter conexão
+		if err := c.WriteJSON(fiber.Map{"type": "ping"}); err != nil {
+			return
 		}
 	}
 }
@@ -105,12 +102,9 @@ func (h *MarketDataWSHandler) HandleBook(c *websocket.Conn) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			if err := c.WriteJSON(fiber.Map{"type": "ping"}); err != nil {
-				return
-			}
+	for range ticker.C {
+		if err := c.WriteJSON(fiber.Map{"type": "ping"}); err != nil {
+			return
 		}
 	}
 }
@@ -157,12 +151,9 @@ func (h *MarketDataWSHandler) HandleTicker(c *websocket.Conn) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			if err := c.WriteJSON(fiber.Map{"type": "ping"}); err != nil {
-				return
-			}
+	for range ticker.C {
+		if err := c.WriteJSON(fiber.Map{"type": "ping"}); err != nil {
+			return
 		}
 	}
 }
@@ -220,12 +211,9 @@ func (h *MarketDataWSHandler) HandleCandles(c *websocket.Conn) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			if err := c.WriteJSON(fiber.Map{"type": "ping"}); err != nil {
-				return
-			}
+	for range ticker.C {
+		if err := c.WriteJSON(fiber.Map{"type": "ping"}); err != nil {
+			return
 		}
 	}
 }
