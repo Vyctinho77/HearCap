@@ -111,32 +111,3 @@ export async function fetchCandles(
   }
 }
 
-/**
- * Converte candle do backend para formato TradingView
- */
-export function candleToTVBar(candle: Candle): {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-} {
-  return {
-    time: new Date(candle.openTime).getTime() / 1000, // TradingView usa segundos
-    open: candle.open,
-    high: candle.high,
-    low: candle.low,
-    close: candle.close,
-    volume: candle.volume,
-  };
-}
-
-/**
- * Converte múltiplos candles para formato TradingView
- */
-export function candlesToTVBars(candles: Candle[]) {
-  return candles.map(candleToTVBar);
-}
-
-

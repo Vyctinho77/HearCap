@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE ?? '';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8080';
 const USER_ID = import.meta.env.VITE_MOCK_USER_ID || 'mock-user-default';
 
 export type TradeSide = 'buy' | 'sell';

@@ -1,0 +1,344 @@
+.tradingContainer {
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  grid-template-rows: 50px 32px minmax(0, 1fr) 280px;
+  grid-template-areas:
+    "header"
+    "ticker"
+    "main"
+    "positions";
+  gap: 4px;
+  padding: 4px;
+  background: #141416;
+  color: #eaecef;
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.headerArea {
+  grid-area: header;
+  background: #101117;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 14px;
+}
+
+.tickerArea {
+  grid-area: ticker;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 16px;
+  min-height: 32px;
+  border-radius: 12px;
+  background: #191b22;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tickerStream {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.tickerActions {
+  display: flex;
+  gap: 8px;
+}
+
+.tickerActionButton {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #eaecef;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.tickerActionButton:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.mainArea {
+  grid-area: main;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(280px, 1fr) minmax(280px, 1fr);
+  grid-template-areas: "chart ordbook ordform";
+  gap: 4px;
+  min-height: 0;
+  grid-auto-rows: minmax(0, 1fr);
+}
+
+.mainArea[data-has-orderform="false"] {
+  grid-template-columns: minmax(0, 3fr) minmax(280px, 1fr);
+  grid-template-areas: "chart ordbook";
+}
+
+.chartShell {
+  grid-area: chart;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  background: #0b0d13;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.toolColumn {
+  background: rgba(255, 255, 255, 0.02);
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  justify-content: center;
+  padding: 12px 0;
+}
+
+.chartPanel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.chartToolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chartStats {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.chartStatHighlight {
+  color: #f6465d;
+  font-weight: 600;
+}
+
+.timeframeGroup {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.timeframeButton {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.timeframeButtonActive {
+  border-color: rgba(255, 255, 255, 0.15);
+  color: #f7f9fb;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.chartCanvas {
+  flex: 1;
+  min-height: 0;
+}
+
+.marketColumn {
+  grid-area: ordbook;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.sideCard {
+  background: #0f1118;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 14px;
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.orderBookPanel {
+  flex: 2;
+  min-height: 0;
+}
+
+.tradesPanel {
+  flex: 1;
+  min-height: 0;
+}
+
+.executionColumn {
+  grid-area: ordform;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #1c0f25 0%, #110815 100%);
+  border: 1px solid rgba(199, 80, 255, 0.35);
+  min-height: 0;
+}
+
+.assetSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(15, 18, 26, 0.9);
+  font-size: 13px;
+}
+
+.assetSummary span:first-child {
+  text-transform: uppercase;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.assetSummary span:last-child {
+  font-family: 'IBM Plex Mono', 'Fira Mono', monospace;
+  font-weight: 600;
+  color: #eaecef;
+}
+
+.orderFormWrapper {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.positionsArea {
+  grid-area: positions;
+  grid-column: 1 / -1;
+  background: #0c0f16;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 16px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.positionsArea > * {
+  height: 100%;
+}
+
+.orderDrawerBackdrop {
+  display: none;
+}
+
+.orderDrawer {
+  display: none;
+}
+
+.orderDrawerBackdropVisible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.orderDrawerOpen {
+  transform: translateY(0);
+}
+
+.sideCard::-webkit-scrollbar,
+.orderFormWrapper::-webkit-scrollbar,
+.positionsArea::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sideCard::-webkit-scrollbar-thumb,
+.orderFormWrapper::-webkit-scrollbar-thumb,
+.positionsArea::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+}
+
+.sideCard::-webkit-scrollbar-track,
+.orderFormWrapper::-webkit-scrollbar-track,
+.positionsArea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (max-width: 1600px) {
+  .mainArea {
+    grid-template-columns: minmax(0, 2.6fr) minmax(260px, 1fr) minmax(260px, 1fr);
+  }
+}
+
+@media (max-width: 1360px) {
+  .mainArea {
+    grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+    grid-template-areas:
+      "chart ordbook"
+      "chart ordform";
+  }
+}
+
+@media (max-width: 1024px) {
+  .tradingContainer {
+    grid-template-rows: 54px 32px minmax(0, 1fr);
+    padding: 4px;
+  }
+
+  .mainArea {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "chart"
+      "ordbook";
+  }
+
+  .executionColumn {
+    display: none;
+  }
+
+  .positionsArea {
+    display: none;
+  }
+
+  .orderDrawerBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 25;
+  }
+
+  .orderDrawer {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 20px 16px 24px;
+    background: #080a11;
+    box-shadow: 0 -24px 64px rgba(0, 0, 0, 0.65);
+    border-top-left-radius: 20px;
+    border-top-right-radius: 20px;
+    transform: translateY(100%);
+    transition: transform 0.3s ease;
+    z-index: 30;
+  }
+}
+

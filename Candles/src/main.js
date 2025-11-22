@@ -2718,7 +2718,7 @@ function drawPriceAxis(range, areas, theme, priceTicks, lastCandle) {
 
   priceScaleCtx.save();
   priceScaleCtx.font = "12px 'Inter', sans-serif";
-  priceScaleCtx.textAlign = "left";
+  priceScaleCtx.textAlign = "right";
   priceScaleCtx.textBaseline = "middle";
 
   priceTicks.forEach((tick) => {
@@ -2732,7 +2732,7 @@ function drawPriceAxis(range, areas, theme, priceTicks, lastCandle) {
     priceScaleCtx.lineTo(tickEnd, labelY);
     priceScaleCtx.stroke();
     priceScaleCtx.fillStyle = theme.text;
-    priceScaleCtx.fillText(formatPrice(tick.price), tickStart + 6, labelY);
+    priceScaleCtx.fillText(formatPrice(tick.price), tickEnd - 6, labelY);
   });
 
   if (lastCandle) {
@@ -2775,10 +2775,10 @@ function drawMinimalPriceAxis(range, areas, theme, lastCandle) {
   priceScaleCtx.save();
   priceScaleCtx.font = "12px 'Inter', sans-serif";
   priceScaleCtx.fillStyle = theme.text;
-  priceScaleCtx.textAlign = "left";
+  priceScaleCtx.textAlign = "right";
   priceScaleCtx.textBaseline = "middle";
-  priceScaleCtx.fillText(formatPrice(range.maxPrice), 18, 28);
-  priceScaleCtx.fillText(formatPrice(range.minPrice), 18, height - 28);
+  priceScaleCtx.fillText(formatPrice(range.maxPrice), width - 18, 28);
+  priceScaleCtx.fillText(formatPrice(range.minPrice), width - 18, height - 28);
 
   if (lastCandle) {
     const priceY = priceToY(lastCandle.close, range, areas.price);
@@ -3246,8 +3246,9 @@ function render() {
   ctx.save();
   const theme = getTheme();
   const features = getActiveFeatures();
-  ctx.fillStyle = theme.panel;
-  ctx.fillRect(0, 0, width, height);
+  // Fundo removido - canvas transparente
+  // ctx.fillStyle = theme.panel;
+  // ctx.fillRect(0, 0, width, height);
 
   const areas = computeLayout(width, height);
   const now = getNow();

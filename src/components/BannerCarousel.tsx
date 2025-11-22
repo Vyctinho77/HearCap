@@ -157,11 +157,10 @@ const CarouselCard: React.FC<{
 };
 
 interface BannerCarouselProps {
-  isSidebarExpanded: boolean;
   onTabChange?: (tab: 'tudo' | 'musica' | 'token') => void;
 }
 
-const BannerCarousel: React.FC<BannerCarouselProps> = ({ isSidebarExpanded, onTabChange }) => {
+const BannerCarousel: React.FC<BannerCarouselProps> = ({ onTabChange }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [progress, setProgress] = useState(0);
   const [activeTab, setActiveTab] = useState<'tudo' | 'musica' | 'token'>('tudo');
@@ -172,7 +171,7 @@ const BannerCarousel: React.FC<BannerCarouselProps> = ({ isSidebarExpanded, onTa
   };
   
   // Largura dinâmica baseada no estado do sidebar
-  const bannerWidth = isSidebarExpanded ? 'var(--center-width-expanded)' : 'var(--center-width-collapsed)';
+  const bannerWidth = '100%';
 
   // Incrementa o progresso (igual ao exemplo: 50ms)
   useEffect(() => {

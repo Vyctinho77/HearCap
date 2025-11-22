@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -22,6 +23,7 @@ type MarketDataWSHandler struct {
 	marketData *engine.MarketDataEngine
 	matching   *engine.MatchingEngine
 	clients    map[string]map[*websocket.Conn]bool // stream -> clients
+	mu         sync.RWMutex                        // protege o map de clients
 }
 
 func NewMarketDataWSHandler(marketData *engine.MarketDataEngine, matching *engine.MatchingEngine) *MarketDataWSHandler {
@@ -30,6 +32,13 @@ func NewMarketDataWSHandler(marketData *engine.MarketDataEngine, matching *engin
 		matching:   matching,
 		clients:    make(map[string]map[*websocket.Conn]bool),
 	}
+}
+
+// SetMarketDataEngine atualiza o engine do handler (thread-safe)
+func (h *MarketDataWSHandler) SetMarketDataEngine(engine *engine.MarketDataEngine) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.marketData = engine
 }
 
 func (h *MarketDataWSHandler) HandleTrades(c *websocket.Conn) {
@@ -110,15 +119,20 @@ func (h *MarketDataWSHandler) HandleBook(c *websocket.Conn) {
 }
 
 func (h *MarketDataWSHandler) HandleTicker(c *websocket.Conn) {
-	symbol := strings.ToUpper(c.Query("symbol", ""))
+	symbolParam := strings.ToUpper(c.Query("symbol", ""))
+	// Permite symbol vazio para listar todos os tickers, mas normaliza o streamID
+	streamSymbol := symbolParam
+	if streamSymbol == "" {
+		streamSymbol = "*" // usa * para representar "todos"
+	}
 
-	streamID := "ticker:" + symbol
+	streamID := "ticker:" + streamSymbol
 	h.registerClient(streamID, c)
 	defer h.unregisterClient(streamID, c)
 
 	// Envia ticker inicial
-	if symbol != "" {
-		ticker, err := h.marketData.GetTicker(symbol)
+	if symbolParam != "" {
+		ticker, err := h.marketData.GetTicker(symbolParam)
 		if err == nil && ticker != nil {
 			c.WriteJSON(fiber.Map{
 				"stream": "ticker",
@@ -219,6 +233,8 @@ func (h *MarketDataWSHandler) HandleCandles(c *websocket.Conn) {
 }
 
 func (h *MarketDataWSHandler) registerClient(streamID string, conn *websocket.Conn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.clients[streamID] == nil {
 		h.clients[streamID] = make(map[*websocket.Conn]bool)
 	}
@@ -227,6 +243,8 @@ func (h *MarketDataWSHandler) registerClient(streamID string, conn *websocket.Co
 }
 
 func (h *MarketDataWSHandler) unregisterClient(streamID string, conn *websocket.Conn) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if clients, ok := h.clients[streamID]; ok {
 		delete(clients, conn)
 		if len(clients) == 0 {
@@ -239,10 +257,18 @@ func (h *MarketDataWSHandler) unregisterClient(streamID string, conn *websocket.
 // BroadcastTrade envia um trade para todos os clientes conectados no stream de trades do símbolo
 func (h *MarketDataWSHandler) BroadcastTrade(symbol string, trade *engine.TradeEvent) {
 	streamID := "trades:" + symbol
+	h.mu.RLock()
 	clients, ok := h.clients[streamID]
 	if !ok {
+		h.mu.RUnlock()
 		return
 	}
+	// Cria uma cópia do map para não manter o lock durante o envio
+	clientsCopy := make(map[*websocket.Conn]bool, len(clients))
+	for conn := range clients {
+		clientsCopy[conn] = true
+	}
+	h.mu.RUnlock()
 
 	msg := fiber.Map{
 		"stream": "trades",
@@ -253,9 +279,9 @@ func (h *MarketDataWSHandler) BroadcastTrade(symbol string, trade *engine.TradeE
 		return
 	}
 
-	for conn := range clients {
+	for conn := range clientsCopy {
 		if err := conn.WriteMessage(websocket.TextMessage, msgBytes); err != nil {
-			delete(clients, conn)
+			h.unregisterClient(streamID, conn)
 		}
 	}
 }
@@ -267,10 +293,24 @@ func (h *MarketDataWSHandler) BroadcastTicker(symbol string, ticker *engine.Tick
 	}
 
 	streamID := "ticker:" + symbol
+	h.mu.RLock()
 	clients, ok := h.clients[streamID]
 	if !ok {
+		h.mu.RUnlock()
 		return
 	}
+	// Também envia para clientes que estão escutando todos os tickers
+	allClients, hasAll := h.clients["ticker:*"]
+	clientsCopy := make(map[*websocket.Conn]bool, len(clients))
+	for conn := range clients {
+		clientsCopy[conn] = true
+	}
+	if hasAll {
+		for conn := range allClients {
+			clientsCopy[conn] = true
+		}
+	}
+	h.mu.RUnlock()
 
 	msg := fiber.Map{
 		"stream": "ticker",
@@ -281,9 +321,9 @@ func (h *MarketDataWSHandler) BroadcastTicker(symbol string, ticker *engine.Tick
 		return
 	}
 
-	for conn := range clients {
+	for conn := range clientsCopy {
 		if err := conn.WriteMessage(websocket.TextMessage, msgBytes); err != nil {
-			delete(clients, conn)
+			h.unregisterClient(streamID, conn)
 		}
 	}
 }
@@ -291,10 +331,17 @@ func (h *MarketDataWSHandler) BroadcastTicker(symbol string, ticker *engine.Tick
 // BroadcastCandle envia atualização de candle
 func (h *MarketDataWSHandler) BroadcastCandle(candle *engine.Candle) {
 	streamID := "candles:" + candle.Symbol + ":" + string(candle.Interval)
+	h.mu.RLock()
 	clients, ok := h.clients[streamID]
 	if !ok {
+		h.mu.RUnlock()
 		return
 	}
+	clientsCopy := make(map[*websocket.Conn]bool, len(clients))
+	for conn := range clients {
+		clientsCopy[conn] = true
+	}
+	h.mu.RUnlock()
 
 	msg := fiber.Map{
 		"stream": "candles",
@@ -305,9 +352,9 @@ func (h *MarketDataWSHandler) BroadcastCandle(candle *engine.Candle) {
 		return
 	}
 
-	for conn := range clients {
+	for conn := range clientsCopy {
 		if err := conn.WriteMessage(websocket.TextMessage, msgBytes); err != nil {
-			delete(clients, conn)
+			h.unregisterClient(streamID, conn)
 		}
 	}
 }
@@ -315,10 +362,17 @@ func (h *MarketDataWSHandler) BroadcastCandle(candle *engine.Candle) {
 // BroadcastOrderBook envia snapshot de order book
 func (h *MarketDataWSHandler) BroadcastOrderBook(symbol string, snapshot engine.OrderBookSnapshot) {
 	streamID := "book:" + symbol
+	h.mu.RLock()
 	clients, ok := h.clients[streamID]
 	if !ok {
+		h.mu.RUnlock()
 		return
 	}
+	clientsCopy := make(map[*websocket.Conn]bool, len(clients))
+	for conn := range clients {
+		clientsCopy[conn] = true
+	}
+	h.mu.RUnlock()
 
 	msg := fiber.Map{
 		"stream": "book",
@@ -329,9 +383,9 @@ func (h *MarketDataWSHandler) BroadcastOrderBook(symbol string, snapshot engine.
 		return
 	}
 
-	for conn := range clients {
+	for conn := range clientsCopy {
 		if err := conn.WriteMessage(websocket.TextMessage, msgBytes); err != nil {
-			delete(clients, conn)
+			h.unregisterClient(streamID, conn)
 		}
 	}
 }

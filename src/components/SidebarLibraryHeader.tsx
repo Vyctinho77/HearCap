@@ -27,32 +27,42 @@ function SidebarLibraryHeader({ isExpanded, onToggle }: SidebarLibraryHeaderProp
           display: 'flex',
           alignItems: 'center',
           justifyContent: isExpanded ? 'space-between' : 'center',
-          padding: isExpanded ? '0 16px' : '12px 0',
+          padding: isExpanded ? '0 16px' : '8px 0',
           cursor: 'default',
-          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          transition: 'all 0.3s cubic-bezier(0.3, 0, 0, 1)',
+          minHeight: 40,
         }}
       >
         <button
           onClick={onToggle}
+          aria-label={isExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
           style={{
             position: isExpanded ? 'absolute' : 'relative',
             left: isExpanded ? 16 : 'auto',
             opacity: isExpanded ? (isHovered ? 1 : 0) : 1,
-            transform: isExpanded ? (isHovered ? 'translateX(0)' : 'translateX(-12px)') : 'translateX(0)',
-            transition: 'all 0.25s ease',
+            transform: isExpanded
+              ? (isHovered ? 'translateX(0) scale(1)' : 'translateX(-12px) scale(0.9)')
+              : 'translateX(0) scale(1)',
+            transition: 'all 0.25s cubic-bezier(0.3, 0, 0, 1)',
             pointerEvents: 'auto',
-            background: 'transparent',
+            background: isHovered ? 'rgba(255, 255, 255, 0.1)' : 'transparent',
             border: 'none',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
+            borderRadius: '50%',
+            width: 32,
+            height: 32,
           }}
         >
           <div
             style={{
               transform: isExpanded ? 'rotate(0deg)' : 'rotate(180deg)',
-              transition: 'transform 0.3s ease',
+              transition: 'transform 0.3s cubic-bezier(0.3, 0, 0, 1)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
             <SvgIcon />
@@ -70,7 +80,7 @@ function SidebarLibraryHeader({ isExpanded, onToggle }: SidebarLibraryHeaderProp
                 margin: 0,
                 paddingLeft: 4,
                 transform: isHovered ? 'translateX(24px)' : 'translateX(0)',
-                transition: 'transform 0.25s ease',
+                transition: 'transform 0.25s cubic-bezier(0.3, 0, 0, 1)',
                 opacity: isExpanded ? 1 : 0,
                 whiteSpace: 'nowrap',
               }}
@@ -78,14 +88,15 @@ function SidebarLibraryHeader({ isExpanded, onToggle }: SidebarLibraryHeaderProp
               Suas Playlists
             </h2>
 
-            <div 
-              style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: 8, 
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
                 marginLeft: 'auto',
                 opacity: isExpanded ? 1 : 0,
-                transition: 'opacity 0.3s ease',
+                transition: 'opacity 0.3s cubic-bezier(0.3, 0, 0, 1)',
+                pointerEvents: isExpanded ? 'auto' : 'none',
               }}
             >
               <button
@@ -130,6 +141,9 @@ function SidebarLibraryHeader({ isExpanded, onToggle }: SidebarLibraryHeaderProp
             display: 'flex',
             gap: 10,
             padding: '0 16px 0 10px',
+            opacity: isExpanded ? 1 : 0,
+            transform: isExpanded ? 'translateY(0)' : 'translateY(-10px)',
+            transition: 'all 0.3s cubic-bezier(0.3, 0, 0, 1)',
           }}
         >
           <div
@@ -174,6 +188,9 @@ function SidebarLibraryHeader({ isExpanded, onToggle }: SidebarLibraryHeaderProp
         <div
           style={{
             padding: '0 16px 0 10px',
+            opacity: isExpanded ? 1 : 0,
+            transform: isExpanded ? 'translateY(0)' : 'translateY(-10px)',
+            transition: 'all 0.3s cubic-bezier(0.3, 0, 0, 1) 0.05s',
           }}
         >
           <div
@@ -214,4 +231,3 @@ function SidebarLibraryHeader({ isExpanded, onToggle }: SidebarLibraryHeaderProp
 }
 
 export default SidebarLibraryHeader;
-

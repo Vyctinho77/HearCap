@@ -1,0 +1,132 @@
+.layout {
+  height: 100vh;
+  background: var(--bg-primary);
+  display: grid;
+  grid-template-rows: auto 1fr var(--player-height);
+  grid-template-areas:
+    'topbar topbar topbar'
+    'sidebar main rightPanel'
+    'player player player';
+  column-gap: var(--spacing-sm);
+  row-gap: var(--topbar-gap);
+  padding: var(--spacing-sm);
+  overflow: hidden;
+  transition: grid-template-columns 0.3s cubic-bezier(0.3, 0, 0, 1);
+}
+
+.topbar {
+  grid-area: topbar;
+}
+
+.sidebar {
+  grid-area: sidebar;
+  background: var(--bg-secondary);
+  border-radius: var(--border-radius);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: all 0.3s cubic-bezier(0.3, 0, 0, 1);
+}
+
+.main {
+  grid-area: main;
+  background: var(--bg-secondary);
+  border-radius: var(--border-radius);
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.rightPanel {
+  grid-area: rightPanel;
+  background: var(--bg-secondary);
+  border-radius: var(--border-radius);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.player {
+  grid-area: player;
+  background: var(--bg-primary);
+  border-radius: var(--border-radius);
+  overflow: hidden;
+}
+
+@media screen and (max-width: 1200px) {
+  .layout {
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    grid-template-areas:
+      'topbar topbar'
+      'sidebar main'
+      'player player';
+  }
+
+  .rightPanel {
+    display: none;
+  }
+}
+
+@media screen and (max-width: 768px) {
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'topbar'
+      'main'
+      'player';
+    padding: 0;
+    gap: 0;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .main,
+  .player {
+    border-radius: 0;
+  }
+}
+
+.sidebar::-webkit-scrollbar,
+.main::-webkit-scrollbar,
+.rightPanel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar::-webkit-scrollbar-track,
+.main::-webkit-scrollbar-track,
+.rightPanel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar::-webkit-scrollbar-thumb,
+.main::-webkit-scrollbar-thumb,
+.rightPanel::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 8px;
+  transition: background 0.2s ease;
+}
+
+.sidebar:hover,
+.sidebar:active,
+.main:hover,
+.main:active,
+.rightPanel:hover,
+.rightPanel:active {
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.sidebar:hover::-webkit-scrollbar-thumb,
+.sidebar:active::-webkit-scrollbar-thumb,
+.main:hover::-webkit-scrollbar-thumb,
+.main:active::-webkit-scrollbar-thumb,
+.rightPanel:hover::-webkit-scrollbar-thumb,
+.rightPanel:active::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}

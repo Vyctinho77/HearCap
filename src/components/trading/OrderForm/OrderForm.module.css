@@ -1,0 +1,195 @@
+.formRoot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 16px;
+  color: #eaecef;
+}
+
+.tabRow {
+  display: flex;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 12px;
+}
+
+.tab {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 0;
+  cursor: pointer;
+  position: relative;
+}
+
+.tabActive {
+  color: #f7f9fb;
+}
+
+.tabActive::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: #9945ff;
+}
+
+.sideToggle {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  padding: 4px;
+  gap: 4px;
+}
+
+.sideButton {
+  border: none;
+  border-radius: 8px;
+  padding: 10px 0;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.sideButtonActiveBuy {
+  background: #2ebd85;
+  color: #08130e;
+}
+
+.sideButtonActiveSell {
+  background: #f6465d;
+  color: #12070a;
+}
+
+.orderTypeRow {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.orderTypeButton {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+}
+
+.orderTypeActive {
+  color: #c750ff;
+}
+
+.balanceRow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.inputBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inputLabel {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.inputGroup {
+  display: flex;
+  align-items: center;
+  background: #1a1d27;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 10px 14px;
+  transition: border-color 0.2s ease;
+}
+
+.inputGroup:focus-within {
+  border-color: #9945ff;
+}
+
+.inputField {
+  flex: 1;
+  background: none;
+  border: none;
+  color: #f7f9fb;
+  font-size: 14px;
+  text-align: right;
+  outline: none;
+}
+
+.inputSuffix {
+  margin-left: 10px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 600;
+}
+
+.sliderBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rangeInput {
+  width: 100%;
+  accent-color: #c750ff;
+}
+
+.rangeMarks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.checkboxRow {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.checkboxRow label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.footer {
+  margin-top: auto;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.actionButton {
+  border: none;
+  border-radius: 10px;
+  padding: 14px 0;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  color: #08130e;
+}
+
+.buyButton {
+  background: linear-gradient(135deg, #2ebd85, #1aa56d);
+}
+
+.sellButton {
+  background: linear-gradient(135deg, #f66c7a, #f6465d);
+}
+

@@ -14,7 +14,7 @@ server/
 ├─ internal/config    # variáveis de ambiente
 ├─ internal/database  # conexão + migrations
 ├─ internal/models    # tabelas essenciais (artists, tokens, prices, candles, playlists)
-├─ internal/services  # popularidade, preços, supply, engine e tradingview
+├─ internal/services  # popularidade, preços, supply e engines
 ├─ internal/engine    # orderbook, matching engine e market maker
 ├─ internal/tasks     # scheduler cron
 └─ internal/http      # handlers e rotas Fiber
@@ -32,12 +32,11 @@ server/
 4. Persiste snapshot em `prices` + candle OHLC em `candles`
 
 ### Endpoints
-- `GET /api/ping` — healthcheck simples
-- `GET /api/tradingview/config` — metadados do datafeed
-- `GET /api/tradingview/time` — timestamp UNIX
-- `GET /api/tradingview/symbols?symbol=GNX` — definição do ativo
-- `GET /api/tradingview/search?query=gn` — busca de tokens
-- `GET /api/tradingview/history?symbol=GNX&resolution=1&from=...&to=...` — candles OHLCV
+- `GET /api/ping` - healthcheck simples
+- `GET /api/market/candles?symbol=GNX&interval=1m&limit=500` - candles OHLCV
+- `GET /api/market/ticker24h?symbol=GNX` - ticker 24h do ativo escolhido ou de todos
+- `GET /api/market/orderbook?symbol=GNX` - snapshot do book
+- `GET /api/market/trades/recent?symbol=GNX&limit=100` - últimos trades para o ativo
 
 ### Próximos passos
 - Expor endpoints de consulta (`/tokens`, `/artists`, `/candles`) para UI interna

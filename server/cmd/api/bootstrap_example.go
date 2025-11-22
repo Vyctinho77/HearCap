@@ -66,7 +66,6 @@ func setupMarketDataEngine(db *gorm.DB, matchingEngine *engine.MatchingEngine) (
 //
 // // Registrar nas rotas
 // routes.Register(app, routes.Dependencies{
-//     TradingViewHandler:  tradingViewHandler,
 //     TradeHandler:        tradeHandler,
 //     MarketDataHandler:   marketDataHandler,
 //     MarketDataWSHandler: marketDataWSHandler,

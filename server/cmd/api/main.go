@@ -55,8 +55,6 @@ func main() {
 		AllowHeaders:     "Origin,Content-Type,Accept,Authorization",
 		AllowCredentials: true,
 	}))
-	tradingViewService := services.NewTradingViewService(db)
-	tradingViewHandler := handlers.NewTradingViewHandler(tradingViewService)
 	walletService := services.NewWalletService(db, cfg)
 	tradeService := services.NewTradeService(db, cfg, walletService, priceEngine)
 	tradeHandler := handlers.NewTradeHandler(tradeService, walletService)
@@ -66,7 +64,9 @@ func main() {
 	tradeRepo := services.NewGORMTradeHistoryRepository(db)
 	tickerRepo := services.NewGORMTickerRepository(db)
 
-	// Criar MarketDataEngine temporário (sem publisher) para poder criar WS handler
+	// Criar WebSocket handler primeiro (sem MatchingEngine por enquanto - pode ser nil)
+	var matchingEngine *engine.MatchingEngine = nil
+	// Criar engine temporário apenas para inicializar o handler
 	tempEngine := engine.NewMarketDataEngine(
 		engine.MarketDataConfig{
 			TickerWindow:    24 * time.Hour,
@@ -77,9 +77,6 @@ func main() {
 		tickerRepo,
 		engine.NewNoOpMarketDataPublisher(), // temporário
 	)
-
-	// Criar WebSocket handler (sem MatchingEngine por enquanto - pode ser nil)
-	var matchingEngine *engine.MatchingEngine = nil
 	marketDataWSHandler := handlers.NewMarketDataWSHandler(tempEngine, matchingEngine)
 
 	// Criar publisher WebSocket
@@ -97,14 +94,13 @@ func main() {
 		wsPublisher,
 	)
 
-	// Atualizar WS handler com engine final
-	marketDataWSHandler = handlers.NewMarketDataWSHandler(marketDataEngine, matchingEngine)
+	// Atualizar o engine do WS handler (sem recriar o handler)
+	marketDataWSHandler.SetMarketDataEngine(marketDataEngine)
 
 	// Criar REST handler
 	marketDataHandler := handlers.NewMarketDataHandler(marketDataEngine, matchingEngine)
 
 	routes.Register(app, routes.Dependencies{
-		TradingViewHandler:  tradingViewHandler,
 		TradeHandler:        tradeHandler,
 		MarketDataHandler:   marketDataHandler,
 		MarketDataWSHandler: marketDataWSHandler,

@@ -8,7 +8,6 @@ import (
 )
 
 type Dependencies struct {
-	TradingViewHandler  *handlers.TradingViewHandler
 	TradeHandler        *handlers.TradeHandler
 	MarketDataHandler   *handlers.MarketDataHandler
 	MarketDataWSHandler *handlers.MarketDataWSHandler
@@ -17,15 +16,6 @@ type Dependencies struct {
 func Register(app *fiber.App, deps Dependencies) {
 	api := app.Group("/api")
 	api.Get("/ping", handlers.PingHandler)
-
-	if deps.TradingViewHandler != nil {
-		tv := api.Group("/tradingview")
-		tv.Get("/config", deps.TradingViewHandler.GetConfig)
-		tv.Get("/time", deps.TradingViewHandler.GetTime)
-		tv.Get("/symbols", deps.TradingViewHandler.GetSymbol)
-		tv.Get("/search", deps.TradingViewHandler.SearchSymbols)
-		tv.Get("/history", deps.TradingViewHandler.GetHistory)
-	}
 
 	if deps.TradeHandler != nil {
 		trades := api.Group("/trades")

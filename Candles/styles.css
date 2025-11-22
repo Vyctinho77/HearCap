@@ -58,8 +58,7 @@ body {
 
 .app {
   width: min(1500px, 100%);
-  background: radial-gradient(circle at 18% 0%, rgba(143, 123, 255, 0.22), transparent 55%),
-    var(--panel);
+  background: transparent;
   border-radius: 20px;
   box-shadow: 0 32px 70px rgba(5, 4, 12, 0.55);
   padding: 2rem 2.5rem 2.5rem;
@@ -86,7 +85,7 @@ body {
   max-width: 100%;
   height: 790px;
   border-radius: 36px;
-  background: #151515;
+  background: transparent;
   padding: 40px 32px 34px;
   display: flex;
   flex-direction: column;
@@ -263,6 +262,7 @@ body {
 .chart-blueprint__body {
   position: relative;
   display: flex;
+  flex-direction: row-reverse;
   align-items: flex-start;
   gap: 14px;
   margin-top: auto;
@@ -278,7 +278,7 @@ body {
   width: 1132px;
   height: 500px;
   border-radius: 26px;
-  background: #04030d;
+  background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.05);
   box-shadow: inset 0 0 45px rgba(0, 0, 0, 0.65);
   overflow: hidden;
@@ -339,17 +339,19 @@ body {
   height: 100%;
   display: block;
   touch-action: none;
-  border-radius: inherit;
+  border-radius: 26px;
 }
 
 #chart {
   pointer-events: none;
   z-index: 0;
+  border-radius: 26px;
 }
 
 #chart-overlay {
   pointer-events: auto;
   z-index: 1;
+  border-radius: 26px;
 }
 
 .chart-toolbar {
@@ -393,6 +395,7 @@ body {
 #drawing-layer {
   pointer-events: auto;
   z-index: 2;
+  border-radius: 26px;
 }
 
 .indicator-toggle-button {
@@ -453,7 +456,7 @@ body {
   height: 100vh !important;
   z-index: 9999 !important;
   border-radius: 0 !important;
-  background: #04030d;
+  background: transparent;
 }
 
 .cinema-active .app__header,

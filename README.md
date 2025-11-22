@@ -1,6 +1,6 @@
-# HearCap - Music Player UI/UX
+# HearCap - Music Player & Trading Interface
 
-Uma interface moderna de player de música construída com React, TypeScript e Vite.
+Uma interface híbrida moderna que combina player de música e terminal de trading, construída com React, TypeScript e Vite.
 
 ## 🚀 Estrutura do Projeto
 
@@ -8,18 +8,28 @@ Uma interface moderna de player de música construída com React, TypeScript e V
 HearCap/
 ├── src/
 │   ├── components/
-│   │   ├── LayoutCanvas.tsx      # Componente principal
-│   │   ├── SearchIcon.tsx        # Ícone de busca
-│   │   ├── SvgIcon.tsx          # Ícone SVG customizado
-│   │   ├── SidebarLibraryHeader.tsx  # Cabeçalho da sidebar
-│   │   └── PlaylistStrip.tsx     # Item de playlist
+│   │   ├── Layout/              # Layout principal (AppLayout)
+│   │   ├── MainPanel/           # Painel central (Feed/Explore)
+│   │   ├── Player/              # Player de música
+│   │   ├── RightPanel/          # Ranking de ativos e Global
+│   │   ├── Sidebar/             # Sidebar colapsável estilo Spotify
+│   │   ├── Topbar/              # Barra superior
+│   │   ├── Trading/             # Interface de Trading
+│   │   │   ├── Layout/          # Componentes do layout de trading
+│   │   │   ├── OrderBook/       # Livro de ofertas
+│   │   │   ├── TradeForm/       # Formulário de trade
+│   │   │   └── TradingLayout.tsx # Layout grid principal
+│   │   ├── TickerPercentage.tsx # Componente de % em tempo real
+│   │   └── TokenExplore.tsx     # Lista de ativos
+│   ├── lib/
+│   │   ├── marketdata/          # Clientes WebSocket e API
+│   │   └── utils/               # Utilitários
 │   ├── styles/
-│   │   └── index.css            # Estilos globais
-│   ├── App.tsx                  # Componente raiz
+│   │   └── index.css            # Estilos globais e variáveis
+│   ├── App.tsx                  # Componente raiz e gestão de estado
 │   └── main.tsx                 # Ponto de entrada
-├── index.html
-├── package.json
-├── tsconfig.json
+├── public/
+│   └── candles/                 # Motor gráfico proprietário
 └── vite.config.ts
 ```
 
@@ -38,96 +48,61 @@ npm run dev
 
 # Build para produção
 npm run build
-
-# Preview do build de produção
-npm run preview
 ```
 
 ## 🎨 Funcionalidades
 
-- ✅ Player de música funcional
-- ✅ Sidebar recolhível com animações suaves
-- ✅ Controles de reprodução (play, pause, próximo, anterior)
-- ✅ Controle de volume interativo
-- ✅ Barra de progresso animada
-- ✅ Shuffle e repeat modes
-- ✅ Painel de ativos em tempo real (TOP 4 + Global)
-- ✅ **Otimizado para 1920x1080** (Full HD)
+### 🎵 Music Player
+- ✅ Player funcional com controles completos
+- ✅ Barra de progresso e volume interativos
+- ✅ Modos Shuffle e Repeat
 
-## 📊 Integração com TradingView
+### 📈 Trading Interface (Novo)
+- ✅ **Layout Grid Responsivo**: Design profissional organizado em grid (Header, Chart, OrderBook, TradePanel).
+- ✅ **Real-time Data**: Atualizações de preço e variação via WebSocket.
+- ✅ **TickerPercentage**: Componente otimizado para exibir variações de preço em tempo real (Verde/Roxo).
+- ✅ **OrderBook Visual**: Livro de ofertas estilizado com barras de profundidade.
+- ✅ **Trade Panel**: Painel de negociação com slider de porcentagem e inputs validados.
 
-O componente `HearCapChart` funciona em dois modos:
+### 🖥️ UI/UX Improvements
+- ✅ **Sidebar Estilo Spotify**:
+  - Colapso suave com animações `cubic-bezier`.
+  - Largura dinâmica (72px a 420px).
+  - Estado "ícone apenas" quando colapsado.
+- ✅ **Visual Limpo**:
+  - Remoção de sparklines (gráficos de linha) para reduzir ruído visual.
+  - Foco em dados numéricos e percentuais em tempo real.
+  - Esquema de cores consistente: **Elegant Green (#0ecb81)** para alta e **HearCap Purple (#C750FF)** para baixa.
+- ✅ **Right Panel Otimizado**: Ranking de ativos simplificado e tabela Global focada em dados.
 
-- **Mock rápido (tv.js)**: usa o widget público do TradingView para validar layout imediato.
-- **Modo profissional (Charting Library + backend UDF)**: conecta diretamente no backend Go (`/api/tradingview/*`) usando `UDFCompatibleDatafeed`.
+## 📊 Gráfico Proprietário (HearCap Candles)
 
-### Variáveis de ambiente (frontend)
+O componente `HearCapCandles` usa um motor proprietário isolado:
+- Integrado via `iframe` para performance e isolamento.
+- Suporta ferramentas de desenho, múltiplos timeframes e indicadores.
+- Localizado em `public/candles`.
 
-Crie ou ajuste `.env` na raiz com as entradas abaixo (todas opcionais):
+## 💳 Integração Backend (Simulada)
 
-```
-VITE_TV_DATAFEED_URL=/api/tradingview
-VITE_TV_CHARTING_LIBRARY_SRC=/charting_library/charting_library.js
-VITE_TV_DATAFEED_BUNDLE_SRC=/charting_library/datafeeds/udf/dist/bundle.js
-VITE_TV_FALLBACK_SYMBOL=BINANCE:BTCUSDT
-```
+O projeto está preparado para conectar com um backend real, mas funciona autonomamente:
+- **Backend Check**: Verifica automaticamente se a API está disponível.
+- **Mock Data**: Se o backend estiver offline, usa dados simulados para garantir que a UI continue funcional para desenvolvimento e demonstração.
 
-- Se `VITE_TV_CHARTING_LIBRARY_SRC` **não** estiver definido → o componente carrega apenas `tv.js` e usa `VITE_TV_FALLBACK_SYMBOL` para exibir um gráfico mock.
-- Se `VITE_TV_CHARTING_LIBRARY_SRC` **estiver** definido → os scripts privados são carregados e, se `window.Datafeeds` existir, o gráfico passa a usar o seu backend Go em tempo real.
+## 📐 Layout Specs
 
-### Como usar a Charting Library
-
-1. Solicite o pacote oficial ao TradingView e extraia a pasta `charting_library/` inteira para `public/`.
-2. Certifique-se de que os caminhos dos scripts batem com as variáveis acima.
-3. Configure o proxy do Vite (ou NEXT_PUBLIC) para que `/api` aponte para o backend Go (porta 8080 por padrão).
-4. Execute o frontend: quando a biblioteca privada estiver disponível, o gráfico consumirá:
-   - `GET /api/tradingview/config`
-   - `GET /api/tradingview/time`
-   - `GET /api/tradingview/symbols`
-   - `GET /api/tradingview/history`
-
-### Fluxo de desenvolvimento recomendado
-
-1. **Fase de layout**: deixe apenas o `tv.js` e veja o gráfico com `BINANCE:BTCUSDT` (ou qualquer fallback).
-2. **Fase de integração**: copie a Charting Library para `public/`, ajuste as envs e verifique no console se `window.Datafeeds` existe.
-3. **Valide o backend**: monitore a aba Network do navegador — você deve ver as chamadas ` /api/tradingview/*` respondendo com os dados gerados pelo seu backend Go.
-
-## 💳 Engine Custodial no Frontend
-
-- Defina `VITE_MOCK_USER_ID` no `.env` do projeto para apontar para um usuário mockado (UUID seedado via backend).
-- O frontend expõe `src/lib/api/trades.ts` e o hook `src/hooks/useWallet.ts`, que:
-  - carregam `GET /api/wallets/:userID`;
-  - executam `POST /api/trades/{buy|sell}` atualizando a carteira em memória e exibindo feedback.
-- O painel de ativo (`TokenExplore`) já inclui o componente `AssetTradePanel`, ou seja:
-  - os botões “Comprar / Vender” chamam o backend Go real;
-  - os saldos de USDT/token são exibidos e atualizados a cada trade;
-  - o novo preço retornado pelo backend atualiza o card imediatamente.
-
-> Esse fluxo mantém o “ledger interno” em Go, pronto para mais tarde sincronizar com Solana sem refatorar o front.
-
-## 📐 Layout
-
-Aplicação web otimizada para resolução **1920 × 1080**:
-
-### Dimensões dos Cards:
-
-- 📦 **Cards Laterais:** 346px × 911px
-- 📦 **Card Central:** 1098px × 911px
-- 📏 **Gap entre cards:** 14px
-- 🔍 **Search Bar:** 600px × 50px
-- 🎵 **Player Footer:** 95% × 90px
-
-> Veja mais detalhes em `ESPECIFICACOES_LAYOUT.md`
+Otimizado para **1920x1080 (Full HD)**:
+- **Sidebar**: Flexível (280px - 420px)
+- **Right Panel**: ~300px
+- **Player**: 90px de altura fixa
 
 ## 🛠️ Tecnologias
 
-- **React 18** - Framework UI
-- **TypeScript** - Tipagem estática
-- **Vite** - Build tool
-- **Lucide React** - Ícones
-- **Montserrat** - Fonte
+- **React 18**
+- **TypeScript**
+- **Vite**
+- **CSS Modules** (para componentes isolados)
+- **Lucide React** (Ícones)
 
 ## 📝 Licença
 
 Projeto pessoal - HearCap © 2025
-
