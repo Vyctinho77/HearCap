@@ -72,6 +72,7 @@ const initialTimeframeKey =
 
 const canvasSize = { width: 0, height: 0 };
 const priceScaleSize = { width: 0, height: 0 };
+const lastObservedContainerSize = { width: 0, height: 0 };
 
 const localeState = {
   value: navigator.language || "pt-BR",
@@ -199,6 +200,34 @@ const layoutConfig = {
   timeScaleHeight: 28,
   indicatorPanelSpacing: 16,
   axisPadding: 8,
+};
+
+const MIN_CHART_WIDTH = 320;
+const MIN_CHART_HEIGHT = 240;
+
+const Y_SCALE_DEFAULTS = {
+  paddingPct: 0.1,
+  maxPadPct: 0.15,
+  minPadPx: 12,
+  includeOverlays: true,
+  centerOnLast: true,
+  scaleMargins: {
+    top: 0.1,
+    bottom: 0.15,
+  },
+};
+
+const PERFORMANCE_DEFAULTS = {
+  decimation: {
+    enabled: true,
+    bucketOversubscription: 1,
+    minBuckets: 24,
+    maxBucketSize: 240,
+  },
+  fpsSampleMs: 1000,
+  offscreen: {
+    enableBuffers: false,
+  },
 };
 
 const MAIN_PANEL_RATIO = 0.65;
@@ -399,13 +428,46 @@ const seriesPointCache = {
   count: 0,
 };
 
-const areaGradientCache = {
-  height: 0,
-  top: 0,
-  colorTop: "",
-  colorBottom: "",
-  gradient: null,
-};
+  const areaGradientCache = {
+    height: 0,
+    top: 0,
+    colorTop: "",
+    colorBottom: "",
+    gradient: null,
+  };
+
+  const decimationState = {
+    key: "",
+    plan: null,
+  };
+
+  const perfCounters = {
+    frameCount: 0,
+    lastSampleTime: 0,
+    fps: 0,
+    lastFrameDuration: 0,
+    rangeLastDuration: 0,
+    rangeAccumulated: 0,
+    rangeSamples: 0,
+    rangeMaxDuration: 0,
+  };
+
+  const performanceFlags = {
+    decimationEnabled: PERFORMANCE_DEFAULTS.decimation.enabled,
+    offscreenBuffers: PERFORMANCE_DEFAULTS.offscreen.enableBuffers,
+  };
+
+  if (typeof window !== "undefined") {
+    performanceFlags.offscreenBuffers = Boolean(window.HC_USE_OFFSCREEN_BUFFERS);
+    if (typeof window.HC_DISABLE_DECIMATION === "boolean") {
+      performanceFlags.decimationEnabled = !window.HC_DISABLE_DECIMATION;
+    }
+  }
+
+  const offscreenSurfaces = {
+    overlay: createOffscreenSurface(overlayCanvas),
+    drawing: createOffscreenSurface(drawingCanvas),
+  };
 
 function normalizeTimeframeKey(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -581,11 +643,30 @@ const resizeObserver =
     ? new ResizeObserver((entries) => {
       for (const entry of entries) {
         if (entry.target !== container) continue;
-        const { width, height } = entry.contentRect;
-        resizeCanvases(width, height);
-        invalidateViewportCaches();
-        scheduleRender();
-        DensityEngine.update();
+        const box = Array.isArray(entry.contentBoxSize)
+          ? entry.contentBoxSize[0]
+          : entry.contentBoxSize;
+        const observedWidth = box?.inlineSize ?? entry.contentRect?.width ?? entry.target?.clientWidth;
+        const observedHeight = box?.blockSize ?? entry.contentRect?.height ?? entry.target?.clientHeight;
+        if (!observedWidth || !observedHeight) continue;
+        const roundedWidth = Math.max(1, Math.round(observedWidth));
+        const roundedHeight = Math.max(1, Math.round(observedHeight));
+        if (
+          roundedWidth === lastObservedContainerSize.width &&
+          roundedHeight === lastObservedContainerSize.height
+        ) {
+          continue;
+        }
+        lastObservedContainerSize.width = roundedWidth;
+        lastObservedContainerSize.height = roundedHeight;
+        requestAnimationFrame(() => {
+          resizeCanvases(roundedWidth, roundedHeight);
+          invalidateViewportCaches();
+          scheduleRender();
+          scheduleOverlayRender();
+          scheduleDrawingRender();
+          DensityEngine.update();
+        });
       }
     })
     : null;
@@ -1047,6 +1128,8 @@ function maybeAutoFollowAfterData() {
 function invalidateViewportCaches() {
   statsCache.start = -1;
   statsCache.end = -1;
+  statsCache.signature = "";
+  statsCache.candleCount = 0;
   statsCache.value = null;
   timeFormattingCache.start = -1;
   timeFormattingCache.end = -1;
@@ -1182,33 +1265,54 @@ function refreshDevicePixelRatio() {
   return false;
 }
 
+function setPixelDensity(layer, context, cssWidth, cssHeight, pixelRatio = dpr) {
+  if (!layer) {
+    return { cssWidth: 0, cssHeight: 0, pixelWidth: 0, pixelHeight: 0 };
+  }
+  const rect = layer.getBoundingClientRect();
+  const width = Math.max(
+    1,
+    Math.round(cssWidth || rect.width || layer.clientWidth || layer.width)
+  );
+  const height = Math.max(
+    1,
+    Math.round(cssHeight || rect.height || layer.clientHeight || layer.height)
+  );
+  const pixelWidth = Math.max(1, Math.round(width * pixelRatio));
+  const pixelHeight = Math.max(1, Math.round(height * pixelRatio));
+
+  layer.style.width = `${width}px`;
+  layer.style.height = `${height}px`;
+  if (layer.width !== pixelWidth) layer.width = pixelWidth;
+  if (layer.height !== pixelHeight) layer.height = pixelHeight;
+  if (context) {
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  }
+
+  return { cssWidth: width, cssHeight: height, pixelWidth, pixelHeight };
+}
+
 function resizeCanvases(width, height) {
-  const w = Math.max(1, Math.round(width));
-  const h = Math.max(1, Math.round(height));
+  const w = Math.max(MIN_CHART_WIDTH, Math.round(width));
+  const h = Math.max(MIN_CHART_HEIGHT, Math.round(height));
   refreshDevicePixelRatio();
   canvasSize.width = w;
   canvasSize.height = h;
-  const pixelWidth = Math.max(1, Math.round(w * dpr));
-  const pixelHeight = Math.max(1, Math.round(h * dpr));
+    const base = setPixelDensity(canvas, ctx, w, h, dpr);
+    const overlay = setPixelDensity(overlayCanvas, overlayCtx, w, h, dpr);
+    const drawing = setPixelDensity(drawingCanvas, drawingCtx, w, h, dpr);
 
-  canvas.style.width = `${w}px`;
-  canvas.style.height = `${h}px`;
-  canvas.width = pixelWidth;
-  canvas.height = pixelHeight;
+    if (performanceFlags.offscreenBuffers) {
+      if (offscreenSurfaces.overlay?.ctx) {
+        offscreenSurfaces.overlay.resize(base.pixelWidth, base.pixelHeight, dpr);
+      }
+      if (offscreenSurfaces.drawing?.ctx) {
+        offscreenSurfaces.drawing.resize(base.pixelWidth, base.pixelHeight, dpr);
+      }
+    }
 
-  if (overlayCanvas) {
-    overlayCanvas.style.width = `${w}px`;
-    overlayCanvas.style.height = `${h}px`;
-    overlayCanvas.width = pixelWidth;
-    overlayCanvas.height = pixelHeight;
-  }
-  if (drawingCanvas) {
-    drawingCanvas.style.width = `${w}px`;
-    drawingCanvas.style.height = `${h}px`;
-    drawingCanvas.width = pixelWidth;
-    drawingCanvas.height = pixelHeight;
-  }
-
+  let priceScaledWidth = null;
+  let priceScaledHeight = null;
   if (priceScaleCanvas && priceScaleCtx) {
     let scaleWidth, scaleHeight;
     if (priceScaleContainer) {
@@ -1221,12 +1325,116 @@ function resizeCanvases(width, height) {
     }
     priceScaleSize.width = scaleWidth;
     priceScaleSize.height = scaleHeight;
-    const scaledWidth = Math.max(1, Math.round(scaleWidth * dpr));
-    const scaledHeight = Math.max(1, Math.round(scaleHeight * dpr));
-    priceScaleCanvas.style.width = `${scaleWidth}px`;
-    priceScaleCanvas.style.height = `${scaleHeight}px`;
-    priceScaleCanvas.width = scaledWidth;
-    priceScaleCanvas.height = scaledHeight;
+    const priceScale = setPixelDensity(
+      priceScaleCanvas,
+      priceScaleCtx,
+      scaleWidth,
+      scaleHeight,
+      dpr
+    );
+    priceScaledWidth = priceScale.pixelWidth;
+    priceScaledHeight = priceScale.pixelHeight;
+  }
+
+  verifyCanvasLayerDimensions(
+    base.pixelWidth,
+    base.pixelHeight,
+    priceScaledWidth,
+    priceScaledHeight,
+    overlay.pixelWidth,
+    drawing.pixelWidth
+  );
+}
+
+  function verifyCanvasLayerDimensions(
+    pixelWidth,
+    pixelHeight,
+    priceWidth,
+    priceHeight,
+    overlayWidth,
+    drawingWidth
+  ) {
+    const expectations = new Map();
+    expectations.set(canvas, { width: pixelWidth, height: pixelHeight });
+    expectations.set(overlayCanvas, { width: overlayWidth || pixelWidth, height: pixelHeight });
+    expectations.set(drawingCanvas, { width: drawingWidth || pixelWidth, height: pixelHeight });
+    if (priceScaleCanvas && priceWidth && priceHeight) {
+      expectations.set(priceScaleCanvas, { width: priceWidth, height: priceHeight });
+    }
+
+    for (const [layer, expected] of expectations.entries()) {
+      if (!layer || !expected) continue;
+      if (layer.width !== expected.width || layer.height !== expected.height) {
+        console.warn("Canvas desync detected; forcing resize");
+        const rect = container?.getBoundingClientRect();
+        if (rect && rect.width && rect.height) {
+          resizeCanvases(rect.width, rect.height);
+        }
+        return;
+      }
+    }
+  }
+
+  function createOffscreenSurface(layer) {
+    const supported = typeof OffscreenCanvas !== "undefined";
+    if (!layer || !supported) {
+      return null;
+    }
+    const offscreen = new OffscreenCanvas(1, 1);
+    const offscreenCtx = offscreen.getContext("2d");
+    return {
+      canvas: offscreen,
+      ctx: offscreenCtx,
+      resize(nextWidth, nextHeight, pixelRatio = dpr) {
+        if (!offscreenCtx) return;
+        const width = Math.max(1, Math.round(nextWidth));
+        const height = Math.max(1, Math.round(nextHeight));
+        if (offscreen.width !== width) offscreen.width = width;
+        if (offscreen.height !== height) offscreen.height = height;
+        offscreenCtx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      },
+      commit(targetCtx, width, height) {
+        if (!offscreenCtx || !targetCtx) return;
+        targetCtx.setTransform(1, 0, 0, 1, 0, 0);
+        targetCtx.clearRect(0, 0, width, height);
+        targetCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        targetCtx.drawImage(offscreen, 0, 0, width, height);
+      },
+    };
+  }
+
+let dprMonitor = null;
+let dprMediaQuery = null;
+
+function handleDprChange() {
+  const rect = container?.getBoundingClientRect();
+  if (rect && rect.width && rect.height) {
+    resizeCanvases(rect.width, rect.height);
+    lastObservedContainerSize.width = Math.max(1, Math.round(rect.width));
+    lastObservedContainerSize.height = Math.max(1, Math.round(rect.height));
+    invalidateViewportCaches();
+    scheduleRender();
+    scheduleOverlayRender();
+    scheduleDrawingRender();
+  }
+}
+
+function startDevicePixelRatioWatcher() {
+  if (dprMonitor) return;
+  dprMonitor = window.setInterval(() => {
+    if (refreshDevicePixelRatio()) {
+      handleDprChange();
+    }
+  }, 500);
+
+  if (typeof window.matchMedia === "function") {
+    const media = window.matchMedia(`(resolution: ${dpr}dppx)`);
+    dprMediaQuery = media;
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", handleDprChange);
+    } else if (typeof media.addListener === "function") {
+      media.addListener(handleDprChange);
+    }
   }
 }
 
@@ -1293,11 +1501,41 @@ function setCursor(value) {
   }
 }
 
-function getNow() {
-  return typeof performance !== "undefined" && typeof performance.now === "function"
-    ? performance.now()
-    : Date.now();
-}
+  function getNow() {
+    return typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
+  }
+
+  function trackFramePerformance(frameStart) {
+    const now = getNow();
+    perfCounters.lastFrameDuration = Math.max(0, now - frameStart);
+    perfCounters.frameCount += 1;
+
+    if (!perfCounters.lastSampleTime) {
+      perfCounters.lastSampleTime = now;
+    }
+
+    if (now - perfCounters.lastSampleTime >= PERFORMANCE_DEFAULTS.fpsSampleMs) {
+      const elapsed = Math.max(1, now - perfCounters.lastSampleTime);
+      perfCounters.fps = (perfCounters.frameCount * 1000) / elapsed;
+      perfCounters.frameCount = 0;
+      perfCounters.lastSampleTime = now;
+      if (typeof window !== "undefined") {
+        window.HC_PERF = { ...perfCounters };
+      }
+    }
+  }
+
+  function trackRangePerformance(durationMs) {
+    if (!Number.isFinite(durationMs)) {
+      return;
+    }
+    perfCounters.rangeLastDuration = Math.max(0, durationMs);
+    perfCounters.rangeAccumulated += perfCounters.rangeLastDuration;
+    perfCounters.rangeSamples += 1;
+    perfCounters.rangeMaxDuration = Math.max(perfCounters.rangeMaxDuration, perfCounters.rangeLastDuration);
+  }
 
 function easeInOutQuad(t) {
   if (t <= 0) return 0;
@@ -1428,9 +1666,9 @@ function ensureSeriesPointCapacity(count) {
   seriesPointCache.capacity = nextCapacity;
 }
 
-function computeSeriesPoints(metadata, areas, range) {
-  const count = Math.max(0, metadata.endIndex - metadata.startIndex);
-  ensureSeriesPointCapacity(count);
+  function computeSeriesPoints(metadata, areas, range) {
+    const count = Math.max(0, metadata.endIndex - metadata.startIndex);
+    ensureSeriesPointCapacity(count);
 
   const xs = seriesPointCache.xs;
   const ys = seriesPointCache.ys;
@@ -1449,9 +1687,193 @@ function computeSeriesPoints(metadata, areas, range) {
     ys[local] = priceToY(source.close, range, areas.price);
   }
 
-  seriesPointCache.count = count;
-  return seriesPointCache;
-}
+    seriesPointCache.count = count;
+    return seriesPointCache;
+  }
+
+  function computeDecimationPlan(metadata, areas) {
+    if (!performanceFlags.decimationEnabled || !metadata || !areas) {
+      decimationState.key = "";
+      decimationState.plan = null;
+      return null;
+    }
+
+    const visibleCount = Math.max(0, metadata.endIndex - metadata.startIndex);
+    const budgetBase = Math.max(1, Math.floor(areas.chartWidth || 0));
+    const budget = Math.max(
+      PERFORMANCE_DEFAULTS.decimation.minBuckets,
+      Math.floor(budgetBase * (PERFORMANCE_DEFAULTS.decimation.bucketOversubscription || 1))
+    );
+
+    if (!Number.isFinite(budget) || visibleCount <= budget) {
+      decimationState.key = "";
+      decimationState.plan = null;
+      return null;
+    }
+
+    const bucketSize = clamp(
+      Math.ceil(visibleCount / budget),
+      1,
+      PERFORMANCE_DEFAULTS.decimation.maxBucketSize
+    );
+    const key = `${metadata.startIndex}:${metadata.endIndex}:${bucketSize}:${areas.chartWidth}`;
+    if (decimationState.key === key) {
+      return decimationState.plan;
+    }
+
+    const buckets = [];
+    for (let start = metadata.startIndex; start < metadata.endIndex; start += bucketSize) {
+      const end = Math.min(metadata.endIndex, start + bucketSize);
+      buckets.push({ start, end, size: end - start, centerIndex: start + (end - start) / 2 });
+    }
+
+    decimationState.key = key;
+    decimationState.plan = {
+      buckets,
+      bucketSize,
+      budget,
+      source: visibleCount,
+    };
+    return decimationState.plan;
+  }
+
+  function aggregateCandleBucket(bucket) {
+    let open = null;
+    let close = null;
+    let high = -Infinity;
+    let low = Infinity;
+    let volume = 0;
+    let time = null;
+    const liveIndex = liveCandleState.index;
+    const liveValues = liveCandleState.values;
+
+    for (let i = bucket.start; i < bucket.end; i += 1) {
+      const candle = candles[i];
+      if (!candle) continue;
+      const source = i === liveIndex ? liveValues : candle;
+      if (!source) continue;
+      if (open === null && Number.isFinite(source.open)) {
+        open = source.open;
+        time = source.time ?? candle.time ?? null;
+      }
+      if (Number.isFinite(source.close)) {
+        close = source.close;
+      }
+      if (Number.isFinite(source.high)) {
+        high = Math.max(high, source.high);
+      }
+      if (Number.isFinite(source.low)) {
+        low = Math.min(low, source.low);
+      }
+      if (Number.isFinite(source.volume)) {
+        volume += source.volume;
+      }
+    }
+
+    if (open === null || close === null || !Number.isFinite(high) || !Number.isFinite(low)) {
+      return null;
+    }
+
+    return {
+      open,
+      close,
+      high,
+      low,
+      volume,
+      time,
+      centerIndex: bucket.centerIndex,
+      size: bucket.size || 1,
+    };
+  }
+
+  function getDecimatedCandles(decimationPlan) {
+    if (!decimationPlan?.buckets?.length) {
+      return null;
+    }
+    if (Array.isArray(decimationPlan.candles)) {
+      return decimationPlan.candles;
+    }
+    const aggregated = [];
+    for (let i = 0; i < decimationPlan.buckets.length; i += 1) {
+      const merged = aggregateCandleBucket(decimationPlan.buckets[i]);
+      if (merged) {
+        aggregated.push(merged);
+      }
+    }
+    decimationPlan.candles = aggregated;
+    return aggregated;
+  }
+
+  function collectBucketExtremes(values, bucket) {
+    if (!Array.isArray(values)) {
+      return [];
+    }
+    let minIndex = -1;
+    let maxIndex = -1;
+    let minValue = Infinity;
+    let maxValue = -Infinity;
+    let lastIndex = -1;
+    for (let i = bucket.start; i < bucket.end; i += 1) {
+      const value = values[i];
+      if (!Number.isFinite(value)) continue;
+      lastIndex = i;
+      if (value < minValue) {
+        minValue = value;
+        minIndex = i;
+      }
+      if (value > maxValue) {
+        maxValue = value;
+        maxIndex = i;
+      }
+    }
+
+    const points = [];
+    if (minIndex !== -1) {
+      points.push({ index: minIndex, value: minValue });
+    }
+    if (maxIndex !== -1 && maxIndex !== minIndex) {
+      points.push({ index: maxIndex, value: maxValue });
+    }
+    if (lastIndex !== -1 && lastIndex !== minIndex && lastIndex !== maxIndex) {
+      points.push({ index: lastIndex, value: values[lastIndex] });
+    }
+    points.sort((a, b) => a.index - b.index);
+    return points;
+  }
+
+  function buildDecimatedPoints(values, metadata, mapper, decimationPlan = decimationState.plan) {
+    const points = [];
+    if (!metadata || typeof mapper !== "function" || !Array.isArray(values)) {
+      return points;
+    }
+
+    const start = metadata.startIndex;
+    const end = metadata.endIndex;
+    if (!decimationPlan?.buckets?.length) {
+      for (let i = start; i < end; i += 1) {
+        const value = values[i];
+        if (!Number.isFinite(value)) continue;
+        const point = mapper(value, i, 1);
+        if (point) {
+          points.push(point);
+        }
+      }
+      return points;
+    }
+
+    for (let i = 0; i < decimationPlan.buckets.length; i += 1) {
+      const bucket = decimationPlan.buckets[i];
+      const extremes = collectBucketExtremes(values, bucket);
+      for (let j = 0; j < extremes.length; j += 1) {
+        const entry = extremes[j];
+        const point = mapper(entry.value, entry.index, bucket.size || 1);
+        if (point) {
+          points.push(point);
+        }
+      }
+    }
+    return points;
+  }
 
 function getAreaGradient(areas, theme) {
   const height = areas.price.height;
@@ -1886,17 +2308,28 @@ function computeLayoutPanels(chartHeight, features, spacing) {
   };
 }
 
+export function mapPriceToY(price, range, area) {
+  if (!range || !area) return area?.top || 0;
+  const span = range.maxPrice - range.minPrice || 1;
+  const margins = range.scaleMargins || Y_SCALE_DEFAULTS.scaleMargins || { top: 0, bottom: 0 };
+  const marginTopPx = area.height * (margins.top || 0);
+  const marginBottomPx = area.height * (margins.bottom || 0);
+  const plotHeight = Math.max(area.height - marginTopPx - marginBottomPx, 1);
+  const yWithinPlot = (1 - (price - range.minPrice) / span) * plotHeight;
+  return area.top + marginTopPx + yWithinPlot;
+}
+
 function priceToY(price, range, area) {
-  return (
-    area.top +
-    (1 - (price - range.minPrice) / (range.maxPrice - range.minPrice || 1)) *
-    area.height
-  );
+  return mapPriceToY(price, range, area);
 }
 
 function yToPrice(y, range, area) {
-  const clamped = clamp(y, area.top, area.top + area.height);
-  const ratio = 1 - (clamped - area.top) / (area.height || 1);
+  const margins = range.scaleMargins || Y_SCALE_DEFAULTS.scaleMargins || { top: 0, bottom: 0 };
+  const marginTopPx = area.height * (margins.top || 0);
+  const marginBottomPx = area.height * (margins.bottom || 0);
+  const plotHeight = Math.max(area.height - marginTopPx - marginBottomPx, 1);
+  const clamped = clamp(y, area.top + marginTopPx, area.top + marginTopPx + plotHeight);
+  const ratio = 1 - (clamped - (area.top + marginTopPx)) / plotHeight;
   return range.minPrice + ratio * (range.maxPrice - range.minPrice);
 }
 
@@ -2054,40 +2487,206 @@ function getVisibleMetadata(width, areas) {
   return { startIndex, endIndex, visibleCount, barSpacing, offsetX };
 }
 
-function computeSeriesStats(metadata) {
+function collectVisibleSeriesValues({
+  candles: series = [],
+  overlays = [],
+  startIndex = 0,
+  endIndex = series.length,
+  includeOverlays = true,
+}) {
+  let minPrice = Infinity;
+  let maxPrice = -Infinity;
+  let lastClose = null;
+
+  const clampedStart = Math.max(0, Math.floor(startIndex));
+  const clampedEnd = Math.max(clampedStart, Math.min(series.length, Math.ceil(endIndex)));
+
+  for (let i = clampedStart; i < clampedEnd; i += 1) {
+    const item = series[i];
+    if (!item) continue;
+    minPrice = Math.min(minPrice, item.low);
+    maxPrice = Math.max(maxPrice, item.high);
+    lastClose = item.close;
+  }
+
+  if (includeOverlays && overlays?.length) {
+    const overlayList = overlays.filter((indicator) => indicator?.type === "overlay");
+    const safeInclude = (value) => {
+      if (!Number.isFinite(value)) return;
+      minPrice = Math.min(minPrice, value);
+      maxPrice = Math.max(maxPrice, value);
+    };
+    for (let i = 0; i < overlayList.length; i += 1) {
+      const overlay = overlayList[i];
+      for (let index = clampedStart; index < clampedEnd; index += 1) {
+        if (overlay.kind === "band") {
+          safeInclude(overlay.upper?.[index]);
+          safeInclude(overlay.lower?.[index]);
+          safeInclude(overlay.middle?.[index]);
+        } else {
+          safeInclude(overlay.values?.[index]);
+        }
+      }
+    }
+  }
+
+  return { minPrice, maxPrice, lastClose };
+}
+
+function computeIndicatorSignature(indicators = []) {
+  return indicators
+    .filter(Boolean)
+    .map((indicator) => `${indicator.type || ""}:${indicator.kind || ""}`)
+    .join("|");
+}
+
+export function calculateSmartPriceRange({
+  candles: series = [],
+  overlays = [],
+  viewportHeight,
+  height = 1,
+  startIndex = 0,
+  endIndex = series.length,
+  paddingPct = Y_SCALE_DEFAULTS.paddingPct,
+  minPadPx = Y_SCALE_DEFAULTS.minPadPx,
+  centerOnLast = Y_SCALE_DEFAULTS.centerOnLast,
+  includeOverlays = Y_SCALE_DEFAULTS.includeOverlays,
+  scaleMargins = Y_SCALE_DEFAULTS.scaleMargins,
+  options = {},
+}) {
+  if (!Array.isArray(series) || series.length === 0) {
+    return { minPrice: 0, maxPrice: 1 };
+  }
+
+  const resolvedPaddingPct =
+    options.paddingPct ?? paddingPct ?? Y_SCALE_DEFAULTS.paddingPct;
+  const resolvedMinPadPx = options.minPadPx ?? minPadPx ?? Y_SCALE_DEFAULTS.minPadPx;
+  const resolvedCenterOnLast =
+    options.centerOnLast ?? centerOnLast ?? Y_SCALE_DEFAULTS.centerOnLast;
+  const resolvedIncludeOverlays =
+    options.includeOverlays ?? includeOverlays ?? Y_SCALE_DEFAULTS.includeOverlays;
+  const resolvedScaleMargins = {
+    top: clamp(options.scaleMargins?.top ?? scaleMargins?.top ?? 0, 0, 0.4),
+    bottom: clamp(options.scaleMargins?.bottom ?? scaleMargins?.bottom ?? 0, 0, 0.4),
+  };
+
+  const values = collectVisibleSeriesValues({
+    candles: series,
+    overlays,
+    startIndex,
+    endIndex,
+    includeOverlays: resolvedIncludeOverlays,
+  });
+
+  let minPrice = Number.isFinite(values.minPrice) ? values.minPrice : 0;
+  let maxPrice = Number.isFinite(values.maxPrice) ? values.maxPrice : 1;
+  const sourceMin = Number.isFinite(values.minPrice) ? values.minPrice : minPrice;
+  const sourceMax = Number.isFinite(values.maxPrice) ? values.maxPrice : maxPrice;
+
+  if (!Number.isFinite(minPrice) || !Number.isFinite(maxPrice)) {
+    return { minPrice: 0, maxPrice: 1 };
+  }
+
+  if (minPrice === maxPrice) {
+    const base = Math.max(1, Math.abs(minPrice) * 0.02);
+    minPrice -= base;
+    maxPrice += base;
+  }
+
+  const span = Math.max(maxPrice - minPrice, 1e-8);
+  const chartHeight = Math.max(viewportHeight ?? height ?? 1, 1);
+  const marginSum = clamp(
+    (resolvedScaleMargins.top || 0) + (resolvedScaleMargins.bottom || 0),
+    0,
+    0.85
+  );
+  const plotHeight = Math.max(chartHeight * Math.max(1 - marginSum, 0.05), 1);
+  const yPerPrice = plotHeight / Math.max(span, 1e-8);
+  const paddingFromPct = span * clamp(resolvedPaddingPct, 0, Y_SCALE_DEFAULTS.maxPadPct);
+  const paddingFromPx = Math.max(resolvedMinPadPx, Y_SCALE_DEFAULTS.minPadPx) / Math.max(yPerPrice, 1e-8);
+  const padding = clamp(
+    paddingFromPct,
+    paddingFromPx,
+    span * (Y_SCALE_DEFAULTS.maxPadPct || 0.15)
+  );
+
+  minPrice -= padding;
+  maxPrice += padding;
+
+  if (resolvedCenterOnLast && Number.isFinite(values.lastClose)) {
+    const paddedSpan = Math.max(maxPrice - minPrice, span);
+    const topSpace = maxPrice - values.lastClose;
+    const bottomSpace = values.lastClose - minPrice;
+    const imbalance = Math.abs(topSpace - bottomSpace);
+    const tolerance = paddedSpan * 0.4;
+
+    if (imbalance > tolerance) {
+      const halfSpan = paddedSpan / 2;
+      let nextMin = values.lastClose - halfSpan;
+      let nextMax = values.lastClose + halfSpan;
+      const guard = Math.max(padding, span * 0.04);
+      nextMin = Math.min(nextMin, sourceMin - guard, minPrice);
+      nextMax = Math.max(nextMax, sourceMax + guard, maxPrice);
+      minPrice = Math.min(nextMin, minPrice);
+      maxPrice = Math.max(nextMax, maxPrice);
+    }
+  }
+
+  const marginFactor = 1 - marginSum;
+  if (marginFactor > 0) {
+    const dataSpan = Math.max(maxPrice - minPrice, 1e-8);
+    const fullSpan = dataSpan / marginFactor;
+    const extraTop = fullSpan * (resolvedScaleMargins.top || 0);
+    const extraBottom = fullSpan * (resolvedScaleMargins.bottom || 0);
+    minPrice -= extraBottom;
+    maxPrice += extraTop;
+  }
+
+  return { minPrice, maxPrice, scaleMargins: resolvedScaleMargins };
+}
+
+function computeSeriesStats(metadata, areas, indicators = []) {
   if (metadata.endIndex <= metadata.startIndex) {
     return { minPrice: 0, maxPrice: 1, maxVolume: 1 };
   }
 
+  const indicatorSignature = computeIndicatorSignature(indicators);
   if (
     statsCache.start === metadata.startIndex &&
     statsCache.end === metadata.endIndex &&
+    statsCache.signature === indicatorSignature &&
+    statsCache.candleCount === candles.length &&
     statsCache.value
   ) {
     return statsCache.value;
   }
 
-  let minPrice = Infinity;
-  let maxPrice = -Infinity;
   let maxVolume = 0;
-
   for (let i = metadata.startIndex; i < metadata.endIndex; i += 1) {
     const item = candles[i];
     if (!item) continue;
-    minPrice = Math.min(minPrice, item.low);
-    maxPrice = Math.max(maxPrice, item.high);
     maxVolume = Math.max(maxVolume, item.volume || 0);
   }
 
-  const spread = Math.max(maxPrice - minPrice, 0.0001);
-  const padding = spread * 0.08;
-  const value = {
-    minPrice: minPrice - padding,
-    maxPrice: maxPrice + padding,
-    maxVolume: Math.max(maxVolume, 1),
-  };
+  const overlayVisible = state.indicatorsVisibility?.overlays !== false;
+  const rangeStart = getNow();
+  const range = calculateSmartPriceRange({
+    candles,
+    overlays: indicators,
+    height: areas?.price?.height || canvasSize.height,
+    startIndex: metadata.startIndex,
+    endIndex: metadata.endIndex,
+    paddingPct: Y_SCALE_DEFAULTS.paddingPct,
+    minPadPx: Y_SCALE_DEFAULTS.minPadPx,
+    centerOnLast: Y_SCALE_DEFAULTS.centerOnLast,
+    includeOverlays: overlayVisible,
+  });
+  trackRangePerformance(getNow() - rangeStart);
+  const value = { ...range, maxVolume: Math.max(maxVolume, 1) };
   statsCache.start = metadata.startIndex;
   statsCache.end = metadata.endIndex;
+  statsCache.signature = indicatorSignature;
+  statsCache.candleCount = candles.length;
   statsCache.value = value;
   return value;
 }
@@ -2527,76 +3126,112 @@ function drawEventMarkers(context, metadata, areas, events, theme, width) {
   }
 }
 
-function drawCandles(metadata, areas, range, theme) {
-  const widthRatio = Math.max(0.35, Math.min(0.95, state.candleWidth));
-  const bodyWidth = Math.min(
-    metadata.barSpacing * widthRatio,
-    metadata.barSpacing - Math.max(state.lineWidth, 1)
-  );
-  const halfBody = bodyWidth / 2;
-  const offsetX = (metadata.barSpacing - bodyWidth) / 2;
-  const liveIndex = liveCandleState.index;
-  const liveValues = liveCandleState.values;
+  function drawCandles(metadata, areas, range, theme, decimationPlan = null) {
+    const widthRatio = Math.max(0.35, Math.min(0.95, state.candleWidth));
+    const bodyWidth = Math.min(
+      metadata.barSpacing * widthRatio,
+      metadata.barSpacing - Math.max(state.lineWidth, 1)
+    );
+    const halfBody = bodyWidth / 2;
+    const offsetX = (metadata.barSpacing - bodyWidth) / 2;
+    const liveIndex = liveCandleState.index;
+    const liveValues = liveCandleState.values;
+    const aggregatedCandles = getDecimatedCandles(decimationPlan);
 
-  const drawBodyPass = (predicate, color) => {
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = Math.max(0.8, state.lineWidth);
-    for (let i = metadata.startIndex; i < metadata.endIndex; i += 1) {
-      const candle = candles[i];
-      if (!candle || !predicate(candle)) continue;
-      const localIndex = i - metadata.startIndex;
-      const x = metadata.offsetX + localIndex * metadata.barSpacing;
-      const bodyX = x + offsetX;
-      const source = i === liveIndex ? liveValues : candle;
-      const yOpen = priceToY(source.open, range, areas.price);
-      const yClose = priceToY(source.close, range, areas.price);
-      const yHigh = priceToY(source.high, range, areas.price);
-      const yLow = priceToY(source.low, range, areas.price);
-      const wickX = Math.round(bodyX + halfBody) + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(wickX, yHigh);
-      ctx.lineTo(wickX, yLow);
-      ctx.stroke();
-
-      const bodyTop = Math.min(yOpen, yClose);
-      const bodyHeight = Math.max(1, Math.abs(yClose - yOpen));
-      ctx.fillRect(bodyX, bodyTop, bodyWidth, bodyHeight);
-    }
-  };
-
-  const drawBorderPass = (predicate, borderColor) => {
-    if (!borderColor) return;
-    ctx.lineWidth = Math.max(0.75, scaleMetric(1));
-    ctx.strokeStyle = borderColor;
-    for (let i = metadata.startIndex; i < metadata.endIndex; i += 1) {
-      const candle = candles[i];
-      if (!candle || !predicate(candle)) continue;
-      const localIndex = i - metadata.startIndex;
-      const x = metadata.offsetX + localIndex * metadata.barSpacing;
-      const bodyX = x + offsetX;
-      const source = i === liveIndex ? liveValues : candle;
-      const yOpen = priceToY(source.open, range, areas.price);
-      const yClose = priceToY(source.close, range, areas.price);
-      const bodyTop = Math.min(yOpen, yClose);
-      const bodyHeight = Math.max(1, Math.abs(yClose - yOpen));
-
-      if (bodyHeight < 1.1) {
-        const lineY = Math.round(bodyTop) + 0.5;
+    const drawBodyPass = (predicate, color) => {
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = Math.max(0.8, state.lineWidth);
+      const iterateAggregated = Array.isArray(aggregatedCandles);
+      for (let i = metadata.startIndex; i < metadata.endIndex; i += 1) {
+        const candleIndex = iterateAggregated ? i - metadata.startIndex : i;
+        const candle = iterateAggregated ? aggregatedCandles[candleIndex] : candles[i];
+        if (!candle || !predicate(candle)) continue;
+        const localIndex = iterateAggregated
+          ? candle.centerIndex - metadata.startIndex
+          : i - metadata.startIndex;
+        const spacing = metadata.barSpacing * (candle.size || 1);
+        const xCenter = metadata.offsetX + (localIndex + 0.5) * metadata.barSpacing;
+        const effectiveWidth = Math.min(
+          Math.max(bodyWidth, spacing * widthRatio),
+          spacing - Math.max(state.lineWidth, 1)
+        );
+        const bodyX = xCenter - effectiveWidth / 2;
+        const source = iterateAggregated
+          ? candle
+          : i === liveIndex
+            ? liveValues
+            : candle;
+        const yOpen = priceToY(source.open, range, areas.price);
+        const yClose = priceToY(source.close, range, areas.price);
+        const yHigh = priceToY(source.high, range, areas.price);
+        const yLow = priceToY(source.low, range, areas.price);
+        const wickX = Math.round(bodyX + effectiveWidth / 2) + 0.5;
         ctx.beginPath();
-        ctx.moveTo(bodyX, lineY);
-        ctx.lineTo(bodyX + bodyWidth, lineY);
+        ctx.moveTo(wickX, yHigh);
+        ctx.lineTo(wickX, yLow);
         ctx.stroke();
-        continue;
-      }
 
-      const crispX = Math.round(bodyX) + 0.5;
-      const crispY = Math.round(bodyTop) + 0.5;
-      const width = Math.max(0.5, bodyWidth - 1);
-      const height = Math.max(0.5, bodyHeight - 1);
-      ctx.strokeRect(crispX, crispY, width, height);
-    }
-  };
+        const bodyTop = Math.min(yOpen, yClose);
+        const bodyHeight = Math.max(1, Math.abs(yClose - yOpen));
+        ctx.fillRect(bodyX, bodyTop, effectiveWidth, bodyHeight);
+        if (iterateAggregated) {
+          i += (candle.size || 1) - 1;
+        }
+      }
+    };
+
+    const drawBorderPass = (predicate, borderColor) => {
+      if (!borderColor) return;
+      ctx.lineWidth = Math.max(0.75, scaleMetric(1));
+      ctx.strokeStyle = borderColor;
+      const iterateAggregated = Array.isArray(aggregatedCandles);
+      for (let i = metadata.startIndex; i < metadata.endIndex; i += 1) {
+        const candleIndex = iterateAggregated ? i - metadata.startIndex : i;
+        const candle = iterateAggregated ? aggregatedCandles[candleIndex] : candles[i];
+        if (!candle || !predicate(candle)) continue;
+        const localIndex = iterateAggregated
+          ? candle.centerIndex - metadata.startIndex
+          : i - metadata.startIndex;
+        const spacing = metadata.barSpacing * (candle.size || 1);
+        const effectiveWidth = Math.min(
+          Math.max(bodyWidth, spacing * widthRatio),
+          spacing - Math.max(state.lineWidth, 1)
+        );
+        const xCenter = metadata.offsetX + (localIndex + 0.5) * metadata.barSpacing;
+        const bodyX = xCenter - effectiveWidth / 2;
+        const source = iterateAggregated
+          ? candle
+          : i === liveIndex
+            ? liveValues
+            : candle;
+        const yOpen = priceToY(source.open, range, areas.price);
+        const yClose = priceToY(source.close, range, areas.price);
+        const bodyTop = Math.min(yOpen, yClose);
+        const bodyHeight = Math.max(1, Math.abs(yClose - yOpen));
+
+        if (bodyHeight < 1.1) {
+          const lineY = Math.round(bodyTop) + 0.5;
+          ctx.beginPath();
+          ctx.moveTo(bodyX, lineY);
+          ctx.lineTo(bodyX + effectiveWidth, lineY);
+          ctx.stroke();
+          if (iterateAggregated) {
+            i += (candle.size || 1) - 1;
+          }
+          continue;
+        }
+
+        const crispX = Math.round(bodyX) + 0.5;
+        const crispY = Math.round(bodyTop) + 0.5;
+        const width = Math.max(0.5, effectiveWidth - 1);
+        const height = Math.max(0.5, bodyHeight - 1);
+        ctx.strokeRect(crispX, crispY, width, height);
+        if (iterateAggregated) {
+          i += (candle.size || 1) - 1;
+        }
+      }
+    };
 
   drawBodyPass(isBullishCandle, theme.bullish);
   drawBodyPass(isBearishCandle, theme.bearish);
@@ -2604,37 +3239,53 @@ function drawCandles(metadata, areas, range, theme) {
   drawBorderPass(isBearishCandle, theme.bearishBorder || theme.bearish);
 }
 
-function drawVolume(metadata, areas, stats, theme) {
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(state.margins.left, areas.volume.top, areas.chartWidth, areas.volume.height);
-  ctx.clip();
+  function drawVolume(metadata, areas, stats, theme, decimationPlan = null) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(state.margins.left, areas.volume.top, areas.chartWidth, areas.volume.height);
+    ctx.clip();
 
-  const volumeRatio = Math.max(0.25, Math.min(0.9, state.candleWidth * 0.85));
-  const barWidth = Math.max(
-    scaleMetric(0.75),
-    Math.min(metadata.barSpacing * volumeRatio, metadata.barSpacing - state.lineWidth)
-  );
-  const offsetX = (metadata.barSpacing - barWidth) / 2;
+    const volumeRatio = Math.max(0.25, Math.min(0.9, state.candleWidth * 0.85));
+    const aggregatedCandles = getDecimatedCandles(decimationPlan);
+    const iterateAggregated = Array.isArray(aggregatedCandles);
 
-  for (let i = metadata.startIndex; i < metadata.endIndex; i += 1) {
-    const candle = candles[i];
-    if (!candle) continue;
-    const localIndex = i - metadata.startIndex;
-    const x = metadata.offsetX + localIndex * metadata.barSpacing;
-    const barX = x + offsetX;
-    const heightRatio = (candle.volume || 0) / (stats.maxVolume || 1);
-    const barHeight = heightRatio * areas.volume.height;
-    const y = areas.volume.top + areas.volume.height - barHeight;
+    for (let i = metadata.startIndex; i < metadata.endIndex; i += 1) {
+      const candleIndex = iterateAggregated ? i - metadata.startIndex : i;
+      const candle = iterateAggregated ? aggregatedCandles[candleIndex] : candles[i];
+      if (!candle) continue;
+      const spacing = metadata.barSpacing * (candle.size || 1);
+      const barWidth = Math.max(
+        scaleMetric(0.75),
+        Math.min(spacing * volumeRatio, spacing - state.lineWidth)
+      );
+      const localIndex = iterateAggregated
+        ? candle.centerIndex - metadata.startIndex
+        : i - metadata.startIndex;
+      const xCenter = metadata.offsetX + (localIndex + 0.5) * metadata.barSpacing;
+      const barX = xCenter - barWidth / 2;
+      const heightRatio = (candle.volume || 0) / (stats.maxVolume || 1);
+      const barHeight = heightRatio * areas.volume.height;
+      const y = areas.volume.top + areas.volume.height - barHeight;
 
-    ctx.fillStyle = isBullishCandle(candle) ? theme.volumeBull : theme.volumeBear;
-    ctx.fillRect(barX, y, barWidth, barHeight);
+      ctx.fillStyle = isBullishCandle(candle) ? theme.volumeBull : theme.volumeBear;
+      ctx.fillRect(barX, y, barWidth, barHeight);
+      if (iterateAggregated) {
+        i += (candle.size || 1) - 1;
+      }
+    }
+
+    ctx.restore();
   }
 
-  ctx.restore();
-}
-
-function drawOverlayIndicators(context, metadata, areas, stats, theme, indicators = []) {
+  function drawOverlayIndicators(
+    context,
+    metadata,
+    areas,
+    stats,
+    theme,
+    indicators = [],
+    decimationPlan = null
+  ) {
   if (
     !context ||
     !metadata ||
@@ -2656,16 +3307,23 @@ function drawOverlayIndicators(context, metadata, areas, stats, theme, indicator
   for (let i = 0; i < overlays.length; i += 1) {
     const indicator = overlays[i];
     if (!indicator) continue;
-    if (indicator.kind === "band") {
-      drawOverlayBandIndicator(context, indicator, metadata, areas.price, stats);
-    } else {
-      drawOverlayLineIndicator(context, indicator, metadata, areas.price, stats);
+      if (indicator.kind === "band") {
+        drawOverlayBandIndicator(context, indicator, metadata, areas.price, stats, decimationPlan);
+      } else {
+        drawOverlayLineIndicator(context, indicator, metadata, areas.price, stats, decimationPlan);
+      }
     }
+    context.restore();
   }
-  context.restore();
-}
 
-function drawOverlayLineIndicator(context, indicator, metadata, priceArea, stats) {
+  function drawOverlayLineIndicator(
+    context,
+    indicator,
+    metadata,
+    priceArea,
+    stats,
+    decimationPlan = null
+  ) {
   if (!Array.isArray(indicator.values)) {
     return;
   }
@@ -2673,11 +3331,18 @@ function drawOverlayLineIndicator(context, indicator, metadata, priceArea, stats
   context.strokeStyle = indicator.color || "rgba(143,123,255,0.85)";
   context.lineWidth = scaleMetric(indicator.width || 2);
   context.globalAlpha = indicator.opacity ?? 0.9;
-  drawOverlaySeriesLine(context, indicator.values, metadata, priceArea, stats);
-  context.restore();
-}
+    drawOverlaySeriesLine(context, indicator.values, metadata, priceArea, stats, {}, decimationPlan);
+    context.restore();
+  }
 
-function drawOverlayBandIndicator(context, indicator, metadata, priceArea, stats) {
+  function drawOverlayBandIndicator(
+    context,
+    indicator,
+    metadata,
+    priceArea,
+    stats,
+    decimationPlan = null
+  ) {
   if (!indicator.upper || !indicator.lower) {
     return;
   }
@@ -2709,28 +3374,54 @@ function drawOverlayBandIndicator(context, indicator, metadata, priceArea, stats
     upperSegment = [];
     lowerSegment = [];
   };
-  for (let i = start; i < end; i += 1) {
-    const upperValue = indicator.upper[i];
-    const lowerValue = indicator.lower[i];
-    if (!Number.isFinite(upperValue) || !Number.isFinite(lowerValue)) {
-      flushSegment();
-      continue;
+    const upperPoints = buildDecimatedPoints(
+      indicator.upper,
+      metadata,
+      (value, index, span) => {
+        const x = offsetX + (index - start + 0.5) * spacing;
+        return { x, y: priceToY(value, stats, priceArea), span };
+      },
+      decimationPlan
+    );
+    const lowerPoints = buildDecimatedPoints(
+      indicator.lower,
+      metadata,
+      (value, index, span) => {
+        const x = offsetX + (index - start + 0.5) * spacing;
+        return { x, y: priceToY(value, stats, priceArea), span };
+      },
+      decimationPlan
+    );
+    const bandLength = Math.min(upperPoints.length, lowerPoints.length);
+    for (let i = 0; i < bandLength; i += 1) {
+      const upperValue = upperPoints[i];
+      const lowerValue = lowerPoints[i];
+      if (!upperValue || !lowerValue) {
+        flushSegment();
+        continue;
+      }
+      upperSegment.push({ x: upperValue.x, y: upperValue.y });
+      lowerSegment.push({ x: lowerValue.x, y: lowerValue.y });
     }
-    const x = offsetX + (i - start + 0.5) * spacing;
-    upperSegment.push({ x, y: priceToY(upperValue, stats, priceArea) });
-    lowerSegment.push({ x, y: priceToY(lowerValue, stats, priceArea) });
-  }
-  flushSegment();
+    flushSegment();
   context.strokeStyle = indicator.color || "rgba(143,123,255,0.65)";
   context.lineWidth = scaleMetric(indicator.lineWidth || 1.5);
   context.globalAlpha = indicator.opacity ?? 0.85;
-  drawOverlaySeriesLine(context, indicator.upper, metadata, priceArea, stats);
-  drawOverlaySeriesLine(context, indicator.middle, metadata, priceArea, stats, { dash: [4, 4] });
-  drawOverlaySeriesLine(context, indicator.lower, metadata, priceArea, stats);
-  context.restore();
-}
+    drawOverlaySeriesLine(context, indicator.upper, metadata, priceArea, stats, {}, decimationPlan);
+    drawOverlaySeriesLine(context, indicator.middle, metadata, priceArea, stats, { dash: [4, 4] }, decimationPlan);
+    drawOverlaySeriesLine(context, indicator.lower, metadata, priceArea, stats, {}, decimationPlan);
+    context.restore();
+  }
 
-function drawOverlaySeriesLine(context, values, metadata, priceArea, stats, options = {}) {
+function drawOverlaySeriesLine(
+  context,
+  values,
+  metadata,
+  priceArea,
+  stats,
+  options = {},
+  decimationPlan = null
+) {
   if (!Array.isArray(values)) {
     return;
   }
@@ -2743,25 +3434,51 @@ function drawOverlaySeriesLine(context, values, metadata, priceArea, stats, opti
   } else {
     context.setLineDash([]);
   }
+
+  const decimatedPoints = decimationPlan?.buckets?.length
+    ? buildDecimatedPoints(
+        values,
+        metadata,
+        (value, index) => ({
+          x: offsetX + (index - start + 0.5) * spacing,
+          y: priceToY(value, stats, priceArea),
+        }),
+        decimationPlan
+      )
+    : null;
+  const usePoints = Array.isArray(decimatedPoints) && decimatedPoints.length > 0;
+
   let drawing = false;
   context.beginPath();
-  for (let i = start; i < end; i += 1) {
-    const value = values[i];
-    if (!Number.isFinite(value)) {
-      if (drawing) {
-        context.stroke();
-        context.beginPath();
-        drawing = false;
+  if (usePoints) {
+    for (let i = 0; i < decimatedPoints.length; i += 1) {
+      const point = decimatedPoints[i];
+      if (!drawing) {
+        context.moveTo(point.x, point.y);
+        drawing = true;
+      } else {
+        context.lineTo(point.x, point.y);
       }
-      continue;
     }
-    const x = offsetX + (i - start + 0.5) * spacing;
-    const y = priceToY(value, stats, priceArea);
-    if (!drawing) {
-      context.moveTo(x, y);
-      drawing = true;
-    } else {
-      context.lineTo(x, y);
+  } else {
+    for (let i = start; i < end; i += 1) {
+      const value = values[i];
+      if (!Number.isFinite(value)) {
+        if (drawing) {
+          context.stroke();
+          context.beginPath();
+          drawing = false;
+        }
+        continue;
+      }
+      const x = offsetX + (i - start + 0.5) * spacing;
+      const y = priceToY(value, stats, priceArea);
+      if (!drawing) {
+        context.moveTo(x, y);
+        drawing = true;
+      } else {
+        context.lineTo(x, y);
+      }
     }
   }
   if (drawing) {
@@ -2771,7 +3488,7 @@ function drawOverlaySeriesLine(context, values, metadata, priceArea, stats, opti
   context.globalAlpha = 1;
 }
 
-function drawPanelIndicators(context, metadata, areas, theme, indicators = []) {
+function drawPanelIndicators(context, metadata, areas, theme, indicators = [], decimationPlan = null) {
   if (!context || !areas?.panelMap || !Array.isArray(indicators) || !indicators.length) {
     return;
   }
@@ -2788,15 +3505,15 @@ function drawPanelIndicators(context, metadata, areas, theme, indicators = []) {
     context.rect(state.margins.left, panelArea.top, areas.chartWidth, panelArea.height);
     context.clip();
     if (indicator.kind === "oscillator") {
-      drawRSIPanelIndicator(context, indicator, metadata, panelArea, theme, areas.chartWidth);
+      drawRSIPanelIndicator(context, indicator, metadata, panelArea, theme, areas.chartWidth, decimationPlan);
     } else if (indicator.kind === "macd") {
-      drawMACDPanelIndicator(context, indicator, metadata, panelArea, theme, areas.chartWidth);
+      drawMACDPanelIndicator(context, indicator, metadata, panelArea, theme, areas.chartWidth, decimationPlan);
     }
     context.restore();
   }
 }
 
-function drawRSIPanelIndicator(context, indicator, metadata, panelArea, theme, width) {
+function drawRSIPanelIndicator(context, indicator, metadata, panelArea, theme, width, decimationPlan = null) {
   const range = indicator.range || { min: 0, max: 100 };
   const start = metadata.startIndex;
   const end = metadata.endIndex;
@@ -2820,11 +3537,11 @@ function drawRSIPanelIndicator(context, indicator, metadata, panelArea, theme, w
   context.strokeStyle = indicator.color || "rgba(143,123,255,0.95)";
   context.lineWidth = scaleMetric(indicator.lineWidth || 2);
   context.globalAlpha = 0.95;
-  drawIndicatorLineOnPanel(context, indicator.values, metadata, panelArea, range);
+  drawIndicatorLineOnPanel(context, indicator.values, metadata, panelArea, range, decimationPlan);
   context.globalAlpha = 1;
 }
 
-function drawMACDPanelIndicator(context, indicator, metadata, panelArea, theme, width) {
+function drawMACDPanelIndicator(context, indicator, metadata, panelArea, theme, width, decimationPlan = null) {
   const start = metadata.startIndex;
   const end = metadata.endIndex;
   const valueSets = [indicator.macd, indicator.signal, indicator.histogram];
@@ -2833,10 +3550,25 @@ function drawMACDPanelIndicator(context, indicator, metadata, panelArea, theme, 
   const histogramRatio = Math.max(0.25, Math.min(0.85, state.candleWidth * 0.9));
   const barWidth = Math.max(scaleMetric(1), metadata.barSpacing * histogramRatio);
   const offsetX = metadata.offsetX;
-  for (let i = start; i < end; i += 1) {
-    const value = indicator.histogram?.[i];
-    if (!Number.isFinite(value)) continue;
-    const x = offsetX + (i - start + 0.5) * metadata.barSpacing;
+  const histogramPoints = decimationPlan?.buckets?.length
+    ? buildDecimatedPoints(
+        indicator.histogram,
+        metadata,
+        (value, index, span) => ({
+          value,
+          index,
+          span,
+        }),
+        decimationPlan
+      )
+    : null;
+  const useHistogramDecimation = Array.isArray(histogramPoints) && histogramPoints.length > 0;
+
+  const drawHistogramBar = (value, index, span = 1) => {
+    if (!Number.isFinite(value)) return;
+    const spacing = metadata.barSpacing * span;
+    const adjustedBarWidth = Math.max(scaleMetric(1), Math.min(spacing * histogramRatio, spacing - state.lineWidth));
+    const x = offsetX + (index - start + 0.5) * metadata.barSpacing;
     const y = panelValueToY(value, range, panelArea);
     const height = zeroY - y;
     const fillColor =
@@ -2845,15 +3577,27 @@ function drawMACDPanelIndicator(context, indicator, metadata, panelArea, theme, 
         : indicator.colors?.histogramNegative || "rgba(192,132,252,0.35)";
     const rectY = value >= 0 ? y : zeroY;
     context.fillStyle = fillColor;
-    context.fillRect(x - barWidth / 2, rectY, barWidth, Math.abs(height));
+    context.fillRect(x - adjustedBarWidth / 2, rectY, adjustedBarWidth, Math.abs(height));
+  };
+
+  if (useHistogramDecimation) {
+    for (let i = 0; i < histogramPoints.length; i += 1) {
+      const point = histogramPoints[i];
+      drawHistogramBar(point.value, point.index, point.span || 1);
+    }
+  } else {
+    for (let i = start; i < end; i += 1) {
+      const value = indicator.histogram?.[i];
+      drawHistogramBar(value, i, 1);
+    }
   }
   context.save();
   context.strokeStyle = indicator.colors?.macd || "rgba(143,123,255,0.95)";
   context.lineWidth = scaleMetric(2);
-  drawIndicatorLineOnPanel(context, indicator.macd, metadata, panelArea, range);
-  context.strokeStyle = indicator.colors?.signal || "rgba(0,255,128,0.9)";
-  context.lineWidth = scaleMetric(1.5);
-  drawIndicatorLineOnPanel(context, indicator.signal, metadata, panelArea, range);
+    drawIndicatorLineOnPanel(context, indicator.macd, metadata, panelArea, range, decimationPlan);
+    context.strokeStyle = indicator.colors?.signal || "rgba(0,255,128,0.9)";
+    context.lineWidth = scaleMetric(1.5);
+    drawIndicatorLineOnPanel(context, indicator.signal, metadata, panelArea, range, decimationPlan);
   context.restore();
   context.strokeStyle = theme.gridStrong || "rgba(255,255,255,0.08)";
   context.lineWidth = scaleMetric(1);
@@ -2863,7 +3607,7 @@ function drawMACDPanelIndicator(context, indicator, metadata, panelArea, theme, 
   context.stroke();
 }
 
-function drawIndicatorLineOnPanel(context, values, metadata, panelArea, range) {
+function drawIndicatorLineOnPanel(context, values, metadata, panelArea, range, decimationPlan = null) {
   if (!Array.isArray(values)) {
     return;
   }
@@ -2873,23 +3617,48 @@ function drawIndicatorLineOnPanel(context, values, metadata, panelArea, range) {
   const spacing = metadata.barSpacing;
   let drawing = false;
   context.beginPath();
-  for (let i = start; i < end; i += 1) {
-    const value = values[i];
-    if (!Number.isFinite(value)) {
-      if (drawing) {
-        context.stroke();
-        context.beginPath();
-        drawing = false;
+  const decimatedPoints = decimationPlan?.buckets?.length
+    ? buildDecimatedPoints(
+        values,
+        metadata,
+        (value, index) => ({
+          x: offsetX + (index - start + 0.5) * spacing,
+          y: panelValueToY(value, range, panelArea),
+        }),
+        decimationPlan
+      )
+    : null;
+  const usePoints = Array.isArray(decimatedPoints) && decimatedPoints.length > 0;
+
+  if (usePoints) {
+    for (let i = 0; i < decimatedPoints.length; i += 1) {
+      const point = decimatedPoints[i];
+      if (!drawing) {
+        context.moveTo(point.x, point.y);
+        drawing = true;
+      } else {
+        context.lineTo(point.x, point.y);
       }
-      continue;
     }
-    const x = offsetX + (i - start + 0.5) * spacing;
-    const y = panelValueToY(value, range, panelArea);
-    if (!drawing) {
-      context.moveTo(x, y);
-      drawing = true;
-    } else {
-      context.lineTo(x, y);
+  } else {
+    for (let i = start; i < end; i += 1) {
+      const value = values[i];
+      if (!Number.isFinite(value)) {
+        if (drawing) {
+          context.stroke();
+          context.beginPath();
+          drawing = false;
+        }
+        continue;
+      }
+      const x = offsetX + (i - start + 0.5) * spacing;
+      const y = panelValueToY(value, range, panelArea);
+      if (!drawing) {
+        context.moveTo(x, y);
+        drawing = true;
+      } else {
+        context.lineTo(x, y);
+      }
     }
   }
   if (drawing) {
@@ -3481,13 +4250,15 @@ function render() {
   ctx.fillStyle = theme.panel;
   ctx.fillRect(0, 0, width, height);
 
+  const frameStart = getNow();
   const areas = computeLayout(width, height);
-  const now = getNow();
+  const now = frameStart;
   const chartTransitioning = updateChartModeTransition(now);
   const modeBlend = computeModeBlend();
   const animating = applyViewportEasing(areas);
   const metadata = getVisibleMetadata(width, areas);
   const liveAnimating = updateLiveCandleSmoothing(metadata);
+  const decimationPlan = computeDecimationPlan(metadata, areas);
 
   if (metadata.endIndex <= metadata.startIndex) {
     frameState.width = width;
@@ -3502,19 +4273,21 @@ function render() {
     frameState.events = [];
     frameState.indicators = [];
     frameState.transform = null;
+    frameState.decimation = null;
     ctx.restore();
     clearOverlayCanvas();
     clearDrawingCanvas();
     hideTooltip();
+    trackFramePerformance(frameStart);
     return;
   }
 
-  const stats = computeSeriesStats(metadata);
+  const indicatorData = dataProvider.getIndicators(state.timeframe);
+  const stats = computeSeriesStats(metadata, areas, indicatorData);
   const timeFormatting = computeTimeFormatting(metadata);
   const priceTicks = features.showDetailedPriceScale ? buildPriceTicks(stats, areas) : [];
   const needsSeriesPoints = modeBlend.line > 0 || modeBlend.area > 0;
   const seriesPoints = needsSeriesPoints ? computeSeriesPoints(metadata, areas, stats) : null;
-  const indicatorData = dataProvider.getIndicators(state.timeframe);
   const transform = createChartTransform(metadata, areas, stats);
 
   if (features.showGrid) {
@@ -3526,7 +4299,7 @@ function render() {
   if (features.allowCandles && modeBlend.candles > 0) {
     ctx.save();
     ctx.globalAlpha = modeBlend.candles;
-    drawCandles(metadata, areas, stats, theme);
+    drawCandles(metadata, areas, stats, theme, decimationPlan);
     ctx.restore();
   }
   if (modeBlend.area > 0 && seriesPoints && seriesPoints.count > 0) {
@@ -3539,7 +4312,7 @@ function render() {
   const panelsVisible = state.indicatorsVisibility.panels !== false;
 
   if (features.showVolume && panelsVisible) {
-    drawVolume(metadata, areas, stats, theme);
+    drawVolume(metadata, areas, stats, theme, decimationPlan);
   }
   if (features.showDetailedTimeScale) {
     drawTimeAxis(metadata, areas, theme, timeFormatting);
@@ -3570,6 +4343,7 @@ function render() {
   frameState.events = features.showEvents === false ? [] : eventMarkers;
   frameState.indicators = indicatorData;
   frameState.transform = transform;
+  frameState.decimation = decimationPlan;
 
   ctx.restore();
 
@@ -3577,24 +4351,34 @@ function render() {
   renderDrawingLayer();
   refreshDrawingToolbar();
 
+  trackFramePerformance(frameStart);
+
   if (animating || liveAnimating || chartTransitioning) {
     scheduleRender();
   }
 }
 
-function renderOverlay() {
-  if (!overlayCanvas || !overlayCtx) {
-    state.crosshair.candleIndex = -1;
-    liveCandleState.overlayAnimating = false;
-    state.hoveredEventId = null;
-    return false;
-  }
+  function renderOverlay() {
+    if (!overlayCanvas || !overlayCtx) {
+      state.crosshair.candleIndex = -1;
+      liveCandleState.overlayAnimating = false;
+      state.hoveredEventId = null;
+      return false;
+    }
 
-  clearOverlayCanvas();
-  const clipWidth = canvasSize.width || canvas.clientWidth || overlayCanvas.clientWidth || 0;
-  const clipHeight = canvasSize.height || canvas.clientHeight || overlayCanvas.clientHeight || 0;
-  overlayCtx.save();
-  applyCanvasClip(overlayCtx, clipWidth, clipHeight, CANVAS_BORDER_RADIUS);
+    clearOverlayCanvas();
+    const clipWidth = canvasSize.width || canvas.clientWidth || overlayCanvas.clientWidth || 0;
+    const clipHeight = canvasSize.height || canvas.clientHeight || overlayCanvas.clientHeight || 0;
+    const activeOverlayCtx =
+      performanceFlags.offscreenBuffers && offscreenSurfaces.overlay?.ctx
+        ? offscreenSurfaces.overlay.ctx
+        : overlayCtx;
+    if (activeOverlayCtx !== overlayCtx && offscreenSurfaces.overlay?.ctx) {
+      offscreenSurfaces.overlay.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      offscreenSurfaces.overlay.ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    }
+    activeOverlayCtx.save();
+    applyCanvasClip(activeOverlayCtx, clipWidth, clipHeight, CANVAS_BORDER_RADIUS);
 
   const {
     metadata,
@@ -3611,21 +4395,50 @@ function renderOverlay() {
     state.crosshair.candleIndex = -1;
     liveCandleState.overlayAnimating = false;
     hideTooltip();
-    overlayCtx.restore();
+    activeOverlayCtx.restore();
     return false;
   }
 
-  const indicators = frameState.indicators || [];
-  const overlaysVisible = state.indicatorsVisibility.overlays !== false;
-  const panelsVisible = state.indicatorsVisibility.panels !== false;
+    const indicators = frameState.indicators || [];
+    const overlaysVisible = state.indicatorsVisibility.overlays !== false;
+    const panelsVisible = state.indicatorsVisibility.panels !== false;
 
-  if (overlaysVisible) {
-    drawOverlayIndicators(overlayCtx, metadata, areas, stats, theme, indicators);
-  }
+    if (overlaysVisible) {
+      drawOverlayIndicators(
+        activeOverlayCtx,
+        metadata,
+        areas,
+        stats,
+        theme,
+        indicators,
+        frameState.decimation
+      );
+    }
 
-  if (panelsVisible) {
-    drawPanelIndicators(overlayCtx, metadata, areas, theme, indicators);
-  }
+    if (panelsVisible) {
+      drawPanelIndicators(activeOverlayCtx, metadata, areas, theme, indicators, frameState.decimation);
+    }
+
+    if (window.HC_DEBUG_YRANGE && stats && areas?.price) {
+      activeOverlayCtx.save();
+      activeOverlayCtx.setLineDash([6, 4]);
+      activeOverlayCtx.strokeStyle = "rgba(0,255,128,0.65)";
+      activeOverlayCtx.lineWidth = scaleMetric(1.25);
+      const minY = mapPriceToY(stats.minPrice, stats, areas.price);
+      const maxY = mapPriceToY(stats.maxPrice, stats, areas.price);
+      const midY = (minY + maxY) / 2;
+      const drawGuide = (y, color) => {
+        activeOverlayCtx.beginPath();
+        activeOverlayCtx.strokeStyle = color;
+        activeOverlayCtx.moveTo(state.margins.left, y);
+        activeOverlayCtx.lineTo(state.margins.left + areas.chartWidth, y);
+        activeOverlayCtx.stroke();
+      };
+      drawGuide(maxY, "rgba(0,255,128,0.8)");
+      drawGuide(midY, "rgba(255,255,0,0.8)");
+      drawGuide(minY, "rgba(0,192,255,0.8)");
+      activeOverlayCtx.restore();
+    }
 
   let shouldAnimateOverlay = false;
   const blend = modeBlend || modeBlendState;
@@ -3642,29 +4455,29 @@ function renderOverlay() {
   const referenceIndex = hoverIndex !== -1 ? hoverIndex : fallbackIndex;
   const referenceCandle = candles[referenceIndex];
 
-  if (!crosshairEnabled || !state.crosshair.active || hoverIndex === -1) {
-    hideTooltip();
-  } else {
-    const columnX = metadata.offsetX + (hoverIndex - metadata.startIndex) * metadata.barSpacing;
-    const columnWidth = metadata.barSpacing;
-    const highlightHeight =
-      areas.timeAxis.top + areas.timeAxis.height - areas.price.top;
+    if (!crosshairEnabled || !state.crosshair.active || hoverIndex === -1) {
+      hideTooltip();
+    } else {
+      const columnX = metadata.offsetX + (hoverIndex - metadata.startIndex) * metadata.barSpacing;
+      const columnWidth = metadata.barSpacing;
+      const highlightHeight =
+        areas.timeAxis.top + areas.timeAxis.height - areas.price.top;
 
-    overlayCtx.save();
-    const highlightAlpha = Math.min(0.26, 0.08 + candleWeight * 0.18 + lineWeight * 0.08);
-    overlayCtx.globalAlpha = highlightAlpha;
-    overlayCtx.fillStyle = theme.crosshair;
-    overlayCtx.fillRect(columnX, areas.price.top, columnWidth, highlightHeight);
-    overlayCtx.restore();
-  }
+      activeOverlayCtx.save();
+      const highlightAlpha = Math.min(0.26, 0.08 + candleWeight * 0.18 + lineWeight * 0.08);
+      activeOverlayCtx.globalAlpha = highlightAlpha;
+      activeOverlayCtx.fillStyle = theme.crosshair;
+      activeOverlayCtx.fillRect(columnX, areas.price.top, columnWidth, highlightHeight);
+      activeOverlayCtx.restore();
+    }
 
-  let liveOverlayActive = false;
-  if (candleWeight > 0.001) {
-    liveOverlayActive = drawLiveCandleOverlay(
-      overlayCtx,
-      metadata,
-      areas,
-      stats,
+    let liveOverlayActive = false;
+    if (candleWeight > 0.001) {
+      liveOverlayActive = drawLiveCandleOverlay(
+        activeOverlayCtx,
+        metadata,
+        areas,
+        stats,
       theme,
       candleWeight
     );
@@ -3673,30 +4486,30 @@ function renderOverlay() {
     }
   } else {
     liveCandleState.overlayAnimating = false;
-  }
+    }
 
-  if (crosshairEnabled && state.crosshair.active && hoverIndex !== -1) {
-    drawCrosshair(
-      overlayCtx,
-      width,
-      metadata,
-      areas,
+    if (crosshairEnabled && state.crosshair.active && hoverIndex !== -1) {
+      drawCrosshair(
+        activeOverlayCtx,
+        width,
+        metadata,
+        areas,
       stats,
       theme,
       timeFormatting,
       blend,
       features
     );
-  }
+    }
 
-  drawSeriesHeader(overlayCtx, referenceCandle, theme, features);
+    drawSeriesHeader(activeOverlayCtx, referenceCandle, theme, features);
 
-  if (features.showEvents !== false) {
-    drawEventMarkers(
-      overlayCtx,
-      metadata,
-      areas,
-      Array.isArray(events) ? events : [],
+    if (features.showEvents !== false) {
+      drawEventMarkers(
+        activeOverlayCtx,
+        metadata,
+        areas,
+        Array.isArray(events) ? events : [],
       theme,
       width
     );
@@ -3708,13 +4521,16 @@ function renderOverlay() {
     scheduleOverlayRender();
   }
 
-  if (!shouldAnimateOverlay) {
-    liveCandleState.overlayAnimating = false;
-  }
+    if (!shouldAnimateOverlay) {
+      liveCandleState.overlayAnimating = false;
+    }
 
-  overlayCtx.restore();
-  return shouldAnimateOverlay;
-}
+    activeOverlayCtx.restore();
+    if (performanceFlags.offscreenBuffers && activeOverlayCtx !== overlayCtx && offscreenSurfaces.overlay) {
+      offscreenSurfaces.overlay.commit(overlayCtx, overlayCanvas.width, overlayCanvas.height);
+    }
+    return shouldAnimateOverlay;
+  }
 
 function renderDrawingLayer() {
   if (!drawingCanvas || !drawingCtx || !drawingManager) {
@@ -4101,12 +4917,23 @@ function handleWindowResize() {
   }
   if (!container) return;
   const rect = container.getBoundingClientRect();
-  if (!rect.width || !rect.height) return;
+  if (!rect.width || !rect.height) {
+    resizeCanvases(MIN_CHART_WIDTH, MIN_CHART_HEIGHT);
+    invalidateViewportCaches();
+    scheduleRender();
+    scheduleOverlayRender();
+    scheduleDrawingRender();
+    return;
+  }
   const dprChanged = refreshDevicePixelRatio();
   if (!resizeObserver || dprChanged) {
     resizeCanvases(rect.width, rect.height);
+    lastObservedContainerSize.width = Math.max(1, Math.round(rect.width));
+    lastObservedContainerSize.height = Math.max(1, Math.round(rect.height));
     invalidateViewportCaches();
     scheduleRender();
+    scheduleOverlayRender();
+    scheduleDrawingRender();
     DensityEngine.update();
   }
 }
@@ -4141,12 +4968,15 @@ function init() {
     const width = rect.width || container.clientWidth || canvas.width;
     const height = rect.height || container.clientHeight || canvas.height;
     resizeCanvases(width, height);
+    lastObservedContainerSize.width = Math.max(1, Math.round(width));
+    lastObservedContainerSize.height = Math.max(1, Math.round(height));
     resizeObserver?.observe(container);
   } else {
     resizeCanvases(canvas.clientWidth || canvas.width, canvas.clientHeight || canvas.height);
   }
 
   window.addEventListener("resize", handleWindowResize);
+  startDevicePixelRatioWatcher();
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && state.ui.cinemaMode) {
       exitCinemaMode();
@@ -4445,4 +5275,158 @@ function toggleCinemaMode() {
   } else {
     enterCinemaMode();
   }
+}
+
+function createSyntheticSeries(count = 500) {
+  const safeCount = Math.max(10, Math.min(Math.round(count), 20000));
+  const base = [];
+  let price = 100;
+  let time = Date.now() - safeCount * MINUTE_IN_MS;
+  for (let i = 0; i < safeCount; i += 1) {
+    const drift = Math.sin(i / 12) * 0.6 + Math.cos(i / 24) * 0.4;
+    const noise = (Math.random() - 0.5) * 1.2;
+    const change = drift + noise;
+    const open = price;
+    const close = Math.max(1e-6, price + change);
+    const high = Math.max(open, close) + Math.abs(noise) * 0.6;
+    const low = Math.min(open, close) - Math.abs(noise) * 0.6;
+    base.push({ time, open, high, low, close, volume: 100 + Math.random() * 50 });
+    price = close;
+    time += MINUTE_IN_MS;
+  }
+  return base;
+}
+
+function buildSyntheticOverlays(series = []) {
+  const count = series.length;
+  if (!count) return [];
+  const sma = new Array(count).fill(null);
+  const wma = new Array(count).fill(null);
+  let rolling = 0;
+  let weighted = 0;
+  let weightSum = 0;
+  const window = 14;
+  for (let i = 0; i < count; i += 1) {
+    const candle = series[i];
+    if (!candle) continue;
+    rolling += candle.close;
+    const weight = i + 1;
+    weighted += candle.close * weight;
+    weightSum += weight;
+    if (i >= window) {
+      const drop = series[i - window];
+      rolling -= drop.close;
+      const dropWeight = i - window + 1;
+      weighted -= drop.close * dropWeight;
+      weightSum -= dropWeight;
+    }
+    if (i >= window - 1) {
+      sma[i] = rolling / window;
+      wma[i] = weightSum > 0 ? weighted / weightSum : null;
+    }
+  }
+  const band = {
+    type: "overlay",
+    kind: "band",
+    upper: sma.map((value, idx) => (value === null ? null : value * 1.02 + (series[idx]?.close || 0) * 0.01)),
+    lower: sma.map((value, idx) => (value === null ? null : value * 0.98 - (series[idx]?.close || 0) * 0.01)),
+    middle: sma,
+  };
+
+  return [
+    { type: "overlay", kind: "line", values: sma },
+    { type: "overlay", kind: "line", values: wma },
+    band,
+  ];
+}
+
+function createTestHarness() {
+  const defaultSizes = [100, 1000, 10000];
+
+  function measureRangePerformance({ sizes = defaultSizes, iterations = 32, height = 480 } = {}) {
+    const results = [];
+    for (let i = 0; i < sizes.length; i += 1) {
+      const size = sizes[i];
+      const series = createSyntheticSeries(size);
+      const overlays = buildSyntheticOverlays(series);
+      let total = 0;
+      let max = 0;
+      const startIndex = Math.max(0, size - Math.min(size, 240));
+      const endIndex = size;
+      for (let iter = 0; iter < iterations; iter += 1) {
+        const begin = getNow();
+        calculateSmartPriceRange({
+          candles: series,
+          overlays,
+          height,
+          startIndex,
+          endIndex,
+          includeOverlays: true,
+          centerOnLast: true,
+        });
+        const duration = getNow() - begin;
+        total += duration;
+        max = Math.max(max, duration);
+      }
+      const avg = total / Math.max(1, iterations);
+      results.push({ size, iterations, avg, max });
+    }
+    return results;
+  }
+
+  function sampleFps(durationMs = 1500) {
+    return new Promise((resolve) => {
+      const start = getNow();
+      const initialFrameCount = perfCounters.frameCount;
+      const initialRangeSamples = perfCounters.rangeSamples;
+      const initialRangeTotal = perfCounters.rangeAccumulated;
+      const handle = setTimeout(() => {
+        const elapsed = Math.max(1, getNow() - start);
+        const frames = Math.max(0, perfCounters.frameCount - initialFrameCount);
+        const fps = (frames * 1000) / elapsed;
+        const rangeSamples = Math.max(1, perfCounters.rangeSamples - initialRangeSamples);
+        const rangeAvg = (perfCounters.rangeAccumulated - initialRangeTotal) / rangeSamples;
+        resolve({ fps, elapsed, frames, rangeAvg });
+        clearTimeout(handle);
+      }, durationMs);
+    });
+  }
+
+  function resizeForTest(width, height, minHeight = MIN_CHART_HEIGHT) {
+    if (!container) return null;
+    const previous = {
+      width: container.style.width,
+      height: container.style.height,
+      minHeight: container.style.minHeight,
+    };
+    if (width) {
+      container.style.width = typeof width === "number" ? `${width}px` : width;
+    }
+    if (height) {
+      container.style.height = typeof height === "number" ? `${height}px` : height;
+    }
+    container.style.minHeight = typeof minHeight === "number" ? `${minHeight}px` : minHeight;
+    applyContainerResizeDimensions();
+    return previous;
+  }
+
+  function restoreSize(previous) {
+    if (!container || !previous) return;
+    container.style.width = previous.width;
+    container.style.height = previous.height;
+    container.style.minHeight = previous.minHeight;
+    applyContainerResizeDimensions();
+  }
+
+  return {
+    measureRangePerformance,
+    sampleFps,
+    resizeForTest,
+    restoreSize,
+  };
+}
+
+const testHarness = createTestHarness();
+if (typeof window !== "undefined") {
+  window.HC_TESTS = testHarness;
 }
