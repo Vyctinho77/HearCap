@@ -3,7 +3,7 @@ import layoutState from '../../state/layoutState';
 import { registerChartFrame } from '../../state/chartMessenger';
 
 export interface HearCapCandlesProps {
-  height?: number;
+  height?: number | string;
   symbol?: string;
   interval?: string;
   className?: string;
@@ -19,7 +19,7 @@ export interface HearCapCandlesProps {
 const DEFAULT_EMBED_URL = import.meta.env.VITE_CANDLES_EMBED_URL || '/candles/embed.html';
 
 export function HearCapCandles({
-  height = 640,
+  height,
   symbol,
   interval,
   className,
@@ -76,6 +76,20 @@ export function HearCapCandles({
     return unregister;
   }, [embedSrc]);
 
+  const computedHeight = useMemo(() => {
+    if (height !== undefined) {
+      return height;
+    }
+    return tradingMode ? '100%' : 640;
+  }, [height, tradingMode]);
+
+  const computedMinHeight = useMemo(() => {
+    if (typeof height === 'number') {
+      return height;
+    }
+    return tradingMode ? 320 : 0;
+  }, [height, tradingMode]);
+
   return (
     <iframe
       title="HearCap Candles"
@@ -84,9 +98,9 @@ export function HearCapCandles({
       className={className}
       style={{
         width: '100%',
-        height: height ? height : '100%',
+        height: computedHeight,
         minWidth: 0,
-        minHeight: 0,
+        minHeight: computedMinHeight,
         border: 'none',
         display: 'block',
         background: 'transparent',

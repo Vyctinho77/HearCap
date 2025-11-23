@@ -24,7 +24,10 @@
     html,
     body {
       width: 100% !important;
-      height: 100% !important;
+      height: 100vh !important;
+      height: 100dvh !important;
+      min-height: 100vh !important;
+      min-height: 100dvh !important;
       overflow: hidden !important;
       background: transparent !important;
       padding: 0 !important;
@@ -34,6 +37,7 @@
     .app {
       width: 100% !important;
       height: 100% !important;
+      min-height: 100% !important;
       max-width: none !important;
       display: flex !important;
       flex-direction: column !important;
@@ -72,7 +76,7 @@
     .chart-main {
       flex: 1 !important;
       display: flex !important;
-      min-height: 0 !important;
+      min-height: 320px !important;
       position: relative !important;
       background: transparent !important;
       border: none !important;
@@ -84,8 +88,8 @@
     .chart-stage {
       flex: 1 !important;
       display: flex !important;
-      min-width: 0 !important;
-      min-height: 0 !important;
+      min-width: 320px !important;
+      min-height: 320px !important;
       position: relative !important;
       background: transparent !important;
     }
@@ -94,7 +98,7 @@
       flex: 1 !important;
       position: relative !important;
       min-width: 0 !important;
-      min-height: 0 !important;
+      min-height: 320px !important;
       background: transparent !important;
     }
 
